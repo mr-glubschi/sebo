@@ -127,6 +127,14 @@
     transition: transform 0.15s;
   }
 
+  /* Am Handy größere Ziele */
+  @media (pointer: coarse) {
+    .toggle {
+      width: 2.25rem;
+      height: 2.25rem;
+    }
+  }
+
   .toggle.open :global(svg) {
     transform: rotate(90deg);
   }

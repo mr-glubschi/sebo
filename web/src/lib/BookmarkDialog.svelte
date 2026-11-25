@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { api, errorText, type BookmarkChanges } from "./api";
+  import { api, ApiError, errorText, type BookmarkChanges } from "./api";
   import type { Bookmark } from "./bindings/Bookmark";
-  import { normalizeUrl } from "./drag.svelte";
+  import { findUrls, normalizeUrl } from "./links";
   import FolderSelect from "./FolderSelect.svelte";
   import Icon from "./Icon.svelte";
   import { folderPath, type Tree } from "./library";
@@ -78,8 +78,7 @@
   async function paste() {
     try {
       const text = (await navigator.clipboard.readText()).trim();
-      const match = /https?:\/\/[^\s<>"']+/.exec(text);
-      url = match ? match[0] : text.slice(0, 2048);
+      url = findUrls(text)[0] ?? text.slice(0, 2048);
       preview();
     } catch {
       error = "Kein Zugriff auf die Zwischenablage.";
@@ -116,6 +115,8 @@
       if (close) onclose();
     } catch (e) {
       error = errorText(e);
+      // In einem anderen Tab gelöscht oder geändert: Ansicht auffrischen.
+      if (e instanceof ApiError && (e.status === 404 || e.status === 400)) onchanged();
     } finally {
       busy = false;
     }
@@ -152,8 +153,10 @@
     <div class="field">
       <label for="bookmark-url">Adresse</label>
       <div class="with-button">
+        <!-- svelte-ignore a11y_autofocus -->
         <input
           id="bookmark-url"
+          autofocus
           type="text"
           inputmode="url"
           autocomplete="off"
@@ -228,10 +231,12 @@
         </button>
       {/if}
       {#if confirmDelete}
+        <!-- svelte-ignore a11y_autofocus -->
         <button
           type="button"
           class="danger"
           disabled={busy}
+          autofocus
           onclick={() => run(() => api.deleteBookmark(id))}
         >
           Wirklich löschen

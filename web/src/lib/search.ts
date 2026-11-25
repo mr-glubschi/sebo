@@ -40,12 +40,13 @@ export class SearchIndex {
     this.haystack = bookmarks.map((b) => fold(`${b.title}\n${host(b.url)}`));
   }
 
-  search(query: string): Hit[] {
+  /** Bestenfalls `MAX_RESULTS` Treffer, dazu die Gesamtzahl. */
+  search(query: string): { hits: Hit[]; total: number } {
     const needle = fold(query.trim());
-    if (needle === "") return [];
+    if (needle === "") return { hits: [], total: 0 };
     // outOfOrder: Suchwörter in beliebiger Reihenfolge.
     const [indexes, info, order] = fuzzy.search(this.haystack, needle, 1, 1000);
-    if (!indexes) return [];
+    if (!indexes) return { hits: [], total: 0 };
 
     const hits: Hit[] = [];
     if (info && order) {
@@ -56,14 +57,42 @@ export class SearchIndex {
         hits.push({ bookmark, title: highlight(bookmark.title, info.ranges[position] ?? []) });
       }
     } else {
-      // Zu viele Treffer für die Rangfolge: in Originalreihenfolge.
+      // Ohne Rangfolge (Suchwörter in anderer Reihenfolge oder sehr viele
+      // Treffer): in Originalreihenfolge.
       for (const index of indexes.slice(0, MAX_RESULTS)) {
         const bookmark = this.bookmarks[index];
-        if (bookmark) hits.push({ bookmark, title: plain(bookmark.title) });
+        if (bookmark) hits.push({ bookmark, title: highlightTerms(bookmark.title, needle) });
       }
     }
-    return hits;
+    return { hits, total: indexes.length };
   }
+}
+
+export const SEARCH_LIMIT = MAX_RESULTS;
+
+/**
+ * Hervorhebung ohne Trefferbereiche von uFuzzy (Suchwörter in anderer
+ * Reihenfolge): jedes Suchwort als Teilzeichenkette im Titel markieren.
+ */
+function highlightTerms(title: string, needle: string): Part[] {
+  const folded = fold(title).toLowerCase();
+  const marked = new Array<boolean>(title.length).fill(false);
+  for (const term of needle.toLowerCase().split(/\s+/).filter(Boolean)) {
+    let from = 0;
+    for (;;) {
+      const at = folded.indexOf(term, from);
+      if (at < 0) break;
+      marked.fill(true, at, at + term.length);
+      from = at + term.length;
+    }
+  }
+  const parts: Part[] = [];
+  for (let i = 0; i < title.length; i++) {
+    const last = parts[parts.length - 1];
+    if (last && last.match === marked[i]) last.text += title[i];
+    else parts.push({ text: title[i] ?? "", match: marked[i] ?? false });
+  }
+  return parts.length > 0 ? parts : plain(title);
 }
 
 function plain(text: string): Part[] {

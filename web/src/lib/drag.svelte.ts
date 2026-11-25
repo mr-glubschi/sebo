@@ -1,3 +1,5 @@
+import { findUrls, normalizeUrl } from "./links";
+
 // Verschieben von Bookmarks und Ordnern per Ziehen, für Maus und Touch.
 //
 // Maus: Ziehen beginnt nach ein paar Pixeln Bewegung.
@@ -52,6 +54,8 @@ export function draggable(node: HTMLElement, initial: DragItem) {
   let startX = 0;
   let startY = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  /** Mit Escape abgebrochen; der Finger bzw. die Maustaste ist noch unten. */
+  let cancelled = false;
 
   function down(event: PointerEvent) {
     if (event.button !== 0 || drag.item || pointerId !== null) return;
@@ -74,11 +78,20 @@ export function draggable(node: HTMLElement, initial: DragItem) {
     drag.target = null;
     document.documentElement.classList.add("dragging");
     if (pointerType !== "mouse") navigator.vibrate?.(15);
+    window.addEventListener("keydown", keydown, true);
     drag.onstart?.(item);
   }
 
+  function keydown(event: KeyboardEvent) {
+    if (event.key !== "Escape" || !drag.item) return;
+    event.preventDefault();
+    event.stopPropagation();
+    finish();
+    cancelled = true;
+  }
+
   function move(event: PointerEvent) {
-    if (event.pointerId !== pointerId) return;
+    if (event.pointerId !== pointerId || cancelled) return;
     if (drag.item) {
       drag.x = event.clientX;
       drag.y = event.clientY;
@@ -96,7 +109,9 @@ export function draggable(node: HTMLElement, initial: DragItem) {
 
   function up(event: PointerEvent) {
     if (event.pointerId !== pointerId) return;
-    if (drag.item) {
+    if (cancelled) {
+      suppressClick();
+    } else if (drag.item) {
       const target = parseTarget(targetAt(event.clientX, event.clientY));
       const dragged = drag.item;
       finish();
@@ -121,6 +136,8 @@ export function draggable(node: HTMLElement, initial: DragItem) {
   function cleanup() {
     clearTimeout(timer);
     pointerId = null;
+    cancelled = false;
+    window.removeEventListener("keydown", keydown, true);
     window.removeEventListener("pointermove", move);
     window.removeEventListener("pointerup", up);
     window.removeEventListener("pointercancel", cancel);
@@ -182,7 +199,9 @@ const MAX_DROPPED = 100;
 export function hasLink(data: DataTransfer | null): boolean {
   if (!data) return false;
   const types = Array.from(data.types);
-  return types.includes("text/uri-list") || types.includes("text/plain");
+  return ["text/uri-list", "text/plain", "text/x-moz-url", "text/html"].some((type) =>
+    types.includes(type),
+  );
 }
 
 /** Links aus einem Ablegen von außen lesen (Browser-Tab, Lesezeichen, Text). */
@@ -210,8 +229,20 @@ export function droppedLinks(data: DataTransfer): DroppedLink[] {
   }
 
   if (links.length === 0) {
+    const html = data.getData("text/html");
+    if (html) {
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      for (const anchor of Array.from(doc.querySelectorAll("a[href]")).slice(0, MAX_DROPPED)) {
+        const href = anchor.getAttribute("href") ?? "";
+        const text = anchor.textContent?.replace(/s+/g, " ").trim();
+        links.push({ url: href, title: text ? text.slice(0, 300) : undefined });
+      }
+    }
+  }
+
+  if (links.length === 0) {
     const text = data.getData("text/plain");
-    for (const match of text.matchAll(/https?:\/\/[^\s<>"']+/g)) links.push({ url: match[0] });
+    for (const url of findUrls(text)) links.push({ url });
   }
 
   const seen = new Set<string>();
@@ -227,15 +258,6 @@ export function droppedLinks(data: DataTransfer): DroppedLink[] {
   return result;
 }
 
-/** Nur http(s); gibt die normalisierte Form zurück. */
-export function normalizeUrl(raw: string): string | null {
-  try {
-    const url = new URL(raw.trim());
-    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
-  } catch {
-    return null;
-  }
-}
 
 // Text des ersten Links. DOMParser führt nichts aus; das Ergebnis wird nur als Text verwendet.
 function titleFromHtml(html: string): string | undefined {

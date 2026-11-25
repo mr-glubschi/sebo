@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import { api, errorText } from "./api";
   import type { Bookmark } from "./bindings/Bookmark";
   import type { Folder } from "./bindings/Folder";
@@ -56,7 +57,16 @@
   let view = $state<ViewMode>(loadPref("view", VIEW_MODES, "cards"));
   let sort = $state<SortMode>(loadPref("sort", SORT_MODES, "new"));
   let menuOpen = $state(false);
-  let dialog = $state<Dialog | null>(shared ? { kind: "add", ...shared } : null);
+  let dialog = $state<Dialog | null>(
+    shared?.url ? { kind: "add", url: shared.url, title: shared.title } : null,
+  );
+  if (shared && !shared.url) {
+    queueMicrotask(() => toasts.show("Im geteilten Inhalt wurde kein Link gefunden.", true));
+  }
+  // Unbekannte Adresse (z. B. /irgendwas): auf die passende Adresse korrigieren.
+  if (!shared && routePath(parseRoute(location.pathname)) !== location.pathname) {
+    history.replaceState(null, "", routePath(parseRoute(location.pathname)));
+  }
   let query = $state("");
   let searchInput = $state<HTMLInputElement>();
   /** Gerade wird ein Link von außen über die Seite gezogen. */
@@ -66,7 +76,8 @@
   const bookmarks = $derived(library?.bookmarks ?? []);
   const index = $derived(new SearchIndex(bookmarks));
   const searching = $derived(query.trim() !== "");
-  const hits = $derived(searching ? index.search(query) : []);
+  const result = $derived(searching ? index.search(query) : { hits: [], total: 0 });
+  const hits = $derived(result.hits);
 
   const counts = $derived.by(() => {
     const result = new Map<number, number>();
@@ -217,7 +228,7 @@
 
   // ---- Verschieben per Ziehen ----
 
-  let menuOpenedByDrag = false;
+  let menuOpenedByDrag = $state(false);
 
   drag.onstart = () => {
     // Am Handy liegen die Ordner im Menü: beim Ziehen aufklappen.
@@ -247,7 +258,8 @@
         toasts.show(`„${item.label}“ → ${targetName(target)}`);
       } else {
         const folder = tree.byId.get(item.id);
-        if (!folder || folder.parent_id === target) return;
+        // Auf sich selbst oder an die alte Stelle gezogen: nichts zu tun.
+        if (!folder || folder.parent_id === target || target === item.id) return;
         if (target !== null && subtree(tree, item.id).has(target)) {
           toasts.show("Ein Ordner kann nicht in sich selbst liegen.", true);
           return;
@@ -363,6 +375,8 @@
   ondragstart={dragstart}
 />
 
+<a class="skip" href="#inhalt">Zum Inhalt springen</a>
+
 <div class="layout" class:menu-open={menuOpen}>
   <aside id="sidebar">
     <Sidebar
@@ -386,7 +400,7 @@
     onclick={() => (menuOpen = false)}
   ></button>
 
-  <div class="content">
+  <div class="content" inert={menuOpen && !menuOpenedByDrag}>
     <header class="toolbar">
       <button
         type="button"
@@ -394,7 +408,11 @@
         aria-label="Menü"
         aria-controls="sidebar"
         aria-expanded={menuOpen}
-        onclick={() => (menuOpen = !menuOpen)}
+        onclick={() => {
+          menuOpen = !menuOpen;
+          // Tastatur: Fokus ins Menü, damit Tab nicht im verdeckten Inhalt landet.
+          if (menuOpen) tick().then(() => document.querySelector<HTMLElement>("#sidebar a")?.focus());
+        }}
       >
         <Icon name="menu" />
       </button>
@@ -477,12 +495,18 @@
       </div>
     </header>
 
-    <main>
+    <main id="inhalt" tabindex="-1">
       {#if loadError}
         <div class="notice" role="alert">
           <span>{loadError}</span>
           <button type="button" class="secondary" onclick={reload}>Erneut versuchen</button>
         </div>
+      {/if}
+
+      {#if searching && result.total > hits.length}
+        <p class="limit">
+          Die besten {hits.length} von {result.total} Treffern. Für weitere die Suche verfeinern.
+        </p>
       {/if}
 
       {#if subfolders.length > 0}
@@ -685,6 +709,32 @@
 
   .hint {
     font-size: 0.9rem;
+  }
+
+  .limit {
+    margin: 0 0 1rem;
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+
+  main:focus {
+    outline: none;
+  }
+
+  .skip {
+    position: absolute;
+    top: 0.5rem;
+    left: 0.5rem;
+    z-index: 100;
+    padding: 0.5rem 1rem;
+    color: var(--accent-text);
+    background: var(--accent);
+    border-radius: calc(var(--radius) - 4px);
+    transform: translateY(-200%);
+  }
+
+  .skip:focus {
+    transform: none;
   }
 
   .ghost {

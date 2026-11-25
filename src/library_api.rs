@@ -317,7 +317,7 @@ async fn import(
     }
     // Parsen braucht Rechenzeit: nicht auf dem Async-Thread.
     let (root, dropped) =
-        tokio::task::spawn_blocking(move || netscape::parse(&String::from_utf8_lossy(&body)))
+        tokio::task::spawn_blocking(move || netscape::parse(&netscape::decode(&body)))
             .await
             .map_err(ApiError::internal)?
             .map_err(|message| ApiError::new(StatusCode::BAD_REQUEST, message))?;
@@ -826,5 +826,30 @@ mod tests {
         };
         assert_eq!(encoding("/api/library").await.as_deref(), Some("gzip"));
         assert_eq!(encoding("/api/auth/status").await, None);
+    }
+
+    #[tokio::test]
+    async fn leerer_titel_setzt_hostnamen() {
+        let state = test_state().await;
+        let cookie = login(&state).await;
+        let (_, created) = call(
+            &state,
+            "POST",
+            "/api/bookmarks",
+            &cookie,
+            Some(json!({ "url": "http://10.0.0.1/admin", "title": "Mein Router" })),
+        )
+        .await;
+        let id = created["id"].as_i64().unwrap();
+        let (status, updated) = call(
+            &state,
+            "PATCH",
+            &format!("/api/bookmarks/{id}"),
+            &cookie,
+            Some(json!({ "title": "  " })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(updated["title"], "10.0.0.1");
     }
 }

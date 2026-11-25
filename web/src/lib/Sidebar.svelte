@@ -5,7 +5,7 @@
   import Footer from "./Footer.svelte";
   import FolderTree from "./FolderTree.svelte";
   import Icon from "./Icon.svelte";
-  import { routePath, type Route, type Tree } from "./library";
+  import { folderPath, routePath, type Route, type Tree } from "./library";
   import { toasts } from "./toast.svelte";
 
   interface Props {
@@ -36,16 +36,39 @@
   }: Props = $props();
 
   let fileInput = $state<HTMLInputElement>();
+  /** Wie im Server (`MAX_IMPORT_BYTES`). */
+  const MAX_IMPORT_BYTES = 20 * 1024 * 1024;
+
+  function count(n: number, one: string, many: string) {
+    return `${n} ${n === 1 ? one : many}`;
+  }
+
+  // Aktueller Ordner liegt in einem zugeklappten Ordner: Eltern aufklappen.
+  $effect(() => {
+    if (route.kind !== "folder") return;
+    const ancestors = folderPath(tree, route.id).slice(0, -1);
+    const closed = ancestors.filter((folder) => collapsed.has(folder.id));
+    if (closed.length === 0) return;
+    const next = new Set(collapsed);
+    for (const folder of closed) next.delete(folder.id);
+    collapsed = next;
+  });
   let importing = $state(false);
 
   async function importFile(event: Event & { currentTarget: HTMLInputElement }) {
     const file = event.currentTarget.files?.[0];
     event.currentTarget.value = "";
     if (!file || importing) return;
+    if (file.size > MAX_IMPORT_BYTES) {
+      toasts.show("Die Datei ist zu groß (höchstens 20 MB).", true);
+      return;
+    }
     importing = true;
     try {
       const result = await api.importFile(file);
-      const parts = [`${result.bookmarks} Bookmarks und ${result.folders} Ordner importiert`];
+      const parts = [
+        `${count(result.bookmarks, "Bookmark", "Bookmarks")} und ${result.folders} Ordner importiert`,
+      ];
       if (result.duplicates > 0) parts.push(`${result.duplicates} schon vorhanden`);
       if (result.invalid > 0) parts.push(`${result.invalid} ungültig`);
       if (result.dropped > 0) parts.push(`${result.dropped} wegen Obergrenze weggelassen`);

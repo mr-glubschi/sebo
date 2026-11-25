@@ -75,10 +75,15 @@
     object-fit: cover;
   }
 
+  /* Favicon groß auf heller Fläche: viele Favicons sind für helle Seiten gemacht. */
   .image .icon {
+    box-sizing: content-box;
     width: 48px;
     height: 48px;
-    border-radius: 8px;
+    padding: 8px;
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 1px 3px rgb(0 0 0 / 0.15);
   }
 
   .icon .icon {

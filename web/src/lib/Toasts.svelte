@@ -32,6 +32,12 @@
     background: var(--text);
     border: none;
     box-shadow: 0 4px 16px rgb(0 0 0 / 0.25);
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    line-clamp: 4;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 
   .toast.error {

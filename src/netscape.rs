@@ -84,11 +84,18 @@ fn walk(
                 }
                 counter.folders += 1;
                 current.folders.push(ImportFolder {
-                    name: text(child),
+                    name: heading_text(child),
                     add_date: date(child),
                     ..Default::default()
                 });
-                pending = Some(current.folders.len() - 1);
+                let index = current.folders.len() - 1;
+                // Kaputte Dateien: Ein nicht geschlossenes <H3> enthält den
+                // Rest der Ebene. Dessen Links gehören in diesen Ordner.
+                if child.children().any(|node| node.value().is_element()) {
+                    let folder = &mut current.folders[index];
+                    walk(child, folder, depth + 1, level + 1, counter);
+                }
+                pending = Some(index);
             }
             "dl" => match pending.take() {
                 Some(index) => {
@@ -124,6 +131,41 @@ fn walk(
         }
     }
     pending
+}
+
+/// Name eines Ordners: nur der eigene Text des <H3>, nicht der von
+/// versehentlich darin liegenden Elementen.
+fn heading_text(element: ElementRef) -> String {
+    let own: String = element
+        .children()
+        .filter_map(|node| node.value().as_text().map(|text| text.to_string()))
+        .collect();
+    let own = own.split_whitespace().collect::<Vec<_>>().join(" ");
+    if own.is_empty() { text(element) } else { own }
+}
+
+/// Liest die Datei als UTF-8. Ältere Exporte (Internet Explorer, Netscape)
+/// sind oft Windows-1252 bzw. ISO-8859-1 kodiert: Ist die Datei kein
+/// gültiges UTF-8, wird sie so gelesen.
+pub fn decode(bytes: &[u8]) -> String {
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        return text.strip_prefix('\u{feff}').unwrap_or(text).to_string();
+    }
+    // Windows-1252: 0x80–0x9F weichen von ISO-8859-1 ab.
+    const HIGH: [char; 32] = [
+        '\u{20ac}', '\u{81}', '\u{201a}', '\u{192}', '\u{201e}', '\u{2026}', '\u{2020}',
+        '\u{2021}', '\u{2c6}', '\u{2030}', '\u{160}', '\u{2039}', '\u{152}', '\u{8d}', '\u{17d}',
+        '\u{8f}', '\u{90}', '\u{2018}', '\u{2019}', '\u{201c}', '\u{201d}', '\u{2022}', '\u{2013}',
+        '\u{2014}', '\u{2dc}', '\u{2122}', '\u{161}', '\u{203a}', '\u{153}', '\u{9d}', '\u{17e}',
+        '\u{178}',
+    ];
+    bytes
+        .iter()
+        .map(|&byte| match byte {
+            0x80..=0x9f => HIGH[usize::from(byte - 0x80)],
+            _ => char::from(byte),
+        })
+        .collect()
 }
 
 fn text(element: ElementRef) -> String {
@@ -280,6 +322,36 @@ mod tests {
         }
         assert_eq!(depth, MAX_DEPTH);
         assert_eq!(folder.bookmarks[0].url, "https://tief.example/");
+    }
+
+    #[test]
+    fn kaputtes_html() {
+        let html = "<DL><p><DT><H3>Offen<DL><DT><A HREF=\"http://10.3.0.1/\">ohne Ende                    <DT><A HREF=http://10.3.0.2/>ohne Anführung</a></DL>                    <DT><H3>Noch</H3><DL><DT><A HREF=\"http://10.3.0.3/\">drin";
+        let (root, _) = parse(html).unwrap();
+        let mut urls = Vec::new();
+        let mut names = Vec::new();
+        fn collect<'a>(f: &'a ImportFolder, urls: &mut Vec<&'a str>, names: &mut Vec<&'a str>) {
+            urls.extend(f.bookmarks.iter().map(|b| b.url.as_str()));
+            for child in &f.folders {
+                names.push(child.name.as_str());
+                collect(child, urls, names);
+            }
+        }
+        collect(&root, &mut urls, &mut names);
+        urls.sort_unstable();
+        assert_eq!(
+            urls,
+            ["http://10.3.0.1/", "http://10.3.0.2/", "http://10.3.0.3/"]
+        );
+        assert_eq!(names[0], "Offen");
+        assert!(names.contains(&"Noch"));
+    }
+
+    #[test]
+    fn zeichensatz() {
+        assert_eq!(decode("Grüße".as_bytes()), "Grüße");
+        assert_eq!(decode(b"Gr\xfc\xdfe aus K\xf6ln \x80"), "Grüße aus Köln €");
+        assert_eq!(decode("\u{feff}<DL>".as_bytes()), "<DL>");
     }
 
     #[test]

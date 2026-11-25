@@ -435,11 +435,21 @@ pub fn update_bookmark(
                 params![id, title],
             )?,
             None => {
+                // Sofort den Hostnamen als Titel; der Abruf ersetzt ihn, falls
+                // die Seite abrufbar ist (bei internen Adressen bleibt er).
+                let url: String =
+                    conn.query_row("SELECT url FROM bookmarks WHERE id = ?1", [id], |row| {
+                        row.get(0)
+                    })?;
+                let fallback = Url::parse(&url)
+                    .map(|url| fallback_title(&url))
+                    .unwrap_or(url);
                 refetch = true;
                 conn.execute(
-                    "UPDATE bookmarks SET title_auto = 1, meta_status = 'pending', fetch_attempts = 0
+                    "UPDATE bookmarks SET title = ?2, title_auto = 1, meta_status = 'pending',
+                         fetch_attempts = 0
                      WHERE id = ?1",
-                    params![id],
+                    params![id, fallback],
                 )?
             }
         };

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, errorText, type DeleteContents, type FolderChanges } from "./api";
+  import { api, ApiError, errorText, type DeleteContents, type FolderChanges } from "./api";
   import type { Bookmark } from "./bindings/Bookmark";
   import type { Folder } from "./bindings/Folder";
   import FolderSelect from "./FolderSelect.svelte";
@@ -51,6 +51,7 @@
       return true;
     } catch (e) {
       error = errorText(e);
+      if (e instanceof ApiError && (e.status === 404 || e.status === 400)) onchanged();
       return false;
     } finally {
       busy = false;
@@ -95,7 +96,8 @@
   <form onsubmit={submit}>
     <label>
       Name
-      <input type="text" bind:value={name} maxlength="200" required />
+      <!-- svelte-ignore a11y_autofocus -->
+      <input type="text" bind:value={name} maxlength="200" required autofocus />
     </label>
 
     <FolderSelect
@@ -143,7 +145,8 @@
           </label>
         {/if}
         <div class="actions">
-          <button type="button" class="danger" disabled={busy} onclick={remove}>
+          <!-- svelte-ignore a11y_autofocus -->
+          <button type="button" class="danger" disabled={busy} onclick={remove} autofocus>
             Wirklich löschen
           </button>
           <button type="button" class="secondary" onclick={() => (confirmDelete = false)}>
