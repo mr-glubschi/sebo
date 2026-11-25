@@ -89,8 +89,8 @@ Release-Profil: `strip = true`, `lto = "thin"`. Ziel: `x86_64-unknown-linux-musl
 
 ```
 folders    id, parent_id (NULL = oberste Ebene), name, created_at
-bookmarks  id, folder_id (NULL = Unsortiert), title, url, image, favicon,
-           meta_status (pending|done|failed), created_at, updated_at
+bookmarks  id, folder_id (NULL = Unsortiert), url, title, title_auto, has_image, has_icon,
+           meta_status (pending|done|failed|skipped), created_at, updated_at
 settings        key, value   (totp_secret, totp_confirmed, totp_last_step)
 sessions        token_hash, created_at, last_seen_at   (Ablauf: 30 Tage nach last_seen_at)
 recovery_codes  code_hash   (benutzte Codes werden gelöscht)
@@ -146,7 +146,7 @@ Bilder: `/data/images/<id>-og.jpg`, `/data/images/<id>-icon.png`. Sicherungen: `
 - [x] **0c. Architektur festlegen** (mit Review aus Sicht Security, Backend, Frontend, Betrieb)
 - [x] **0d. Grundgerüst:** Cargo-Projekt, Vite/Svelte-Projekt, Dockerfile mit cargo-chef, Entrypoint mit PUID/PGID, Healthcheck, CI, Release-Workflow, cargo deny, Dependabot
 - [x] **1. Login:** Passwort/Hash, TOTP-Einrichtung mit QR-Code im Log, Wiederherstellungscodes, `reset-2fa`, `hash-password`, Fehlversuchs-Wartezeit, Sessions, CSRF, Header
-- [ ] **2. API:** Ordner und Bookmarks, Metadaten- und Bildabruf mit SSRF-Schutz, Hintergrund-Abruf
+- [x] **2. API:** Ordner und Bookmarks, Metadaten- und Bildabruf mit SSRF-Schutz, Hintergrund-Abruf
 - [ ] **3. Oberfläche:** Login-Seite, 2FA-Einrichtung, Seitenleiste, drei Ansichten, „+“-Dialog, Bearbeiten-Dialog, Routing
 - [ ] **4. Drag & Drop und Suche:** Links hineinziehen, auf Ordner ziehen, „Verschieben nach …“, Live-Suche
 - [ ] **5. Import und Export**
@@ -167,3 +167,6 @@ Bilder: `/data/images/<id>-og.jpg`, `/data/images/<id>-icon.png`. Sicherungen: `
 - Phase 1: `reset-2fa` zeigt den neuen QR-Code direkt in der Konsole des Befehls statt im Container-Log. Das ist sicherer (nichts im Log) und bequemer.
 - Phase 1: Wiederherstellungscodes nutzen Crockford-Base32 (12 Zeichen, 60 Bit), verwechselbare Zeichen (O/0, I/L/1) werden bei der Eingabe korrigiert.
 - Phase 1 (nach Security-Review): zusätzliche Zählung „Passwort richtig, Code falsch“ über 24 h (bis 1 h Wartezeit, wird durch Erfolg nicht zurückgesetzt), Scheinprüfung bei falschem Passwort gegen Timing-Orakel, Codeprüfung und Sitzung in einer Transaktion, bei HTTPS nur `__Host-`-Cookie, IP aus letztem `X-Forwarded-For`-Eintrag, neue Variable `ALLOWED_HOSTS`, `chown -h`.
+- Phase 2: rustls mit `ring` und `webpki-roots` statt der reqwest-Voreinstellung (aws-lc-rs bräuchte CMake/NASM im Build, Plattform-Zertifikate wären vom Basis-Image abhängig).
+- Phase 2: Neuer Status `skipped` für Bookmarks auf interne Adressen (gespeichert, aber nicht abgerufen). `title_auto` merkt sich, ob der Titel vom Abruf überschrieben werden darf.
+- Phase 2: Zusätzlicher Endpunkt `POST /api/preview` liefert den Titelvorschlag für den „+“-Dialog.

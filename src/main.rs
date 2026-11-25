@@ -2,12 +2,18 @@ mod api;
 mod config;
 mod crypto;
 mod db;
+mod images;
+mod library;
+mod library_api;
+mod meta;
+mod net;
 mod password;
 mod security;
 mod session;
 mod state;
 mod two_factor;
 mod web;
+mod worker;
 
 use std::{process::ExitCode, sync::Arc};
 
@@ -69,6 +75,21 @@ fn serve() -> ExitCode {
     }
     drop(conn);
 
+    let images_dir = config.data_dir.join("images");
+    if let Err(error) = std::fs::create_dir_all(&images_dir) {
+        return fail(format!(
+            "Bildordner {} kann nicht angelegt werden: {error}",
+            images_dir.display()
+        ));
+    }
+    let fetcher = match net::Fetcher::new(config.allow_private_urls) {
+        Ok(fetcher) => fetcher,
+        Err(message) => return fail(message),
+    };
+    if config.allow_private_urls {
+        tracing::info!("ALLOW_PRIVATE_URLS ist aktiv: auch interne Adressen werden abgerufen");
+    }
+
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -94,7 +115,11 @@ fn serve() -> ExitCode {
             config: Arc::new(config),
             password: Arc::new(password),
             login: Default::default(),
+            fetcher: Arc::new(fetcher),
+            worker: Default::default(),
+            images_dir,
         };
+        worker::spawn(state.clone());
         web::run(state).await.map_err(|error| error.to_string())
     });
 

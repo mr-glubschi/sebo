@@ -11,6 +11,8 @@ pub struct Config {
     pub trust_proxy: bool,
     /// Erlaubte Hostnamen (klein geschrieben). Leer = jeder Host.
     pub allowed_hosts: Vec<String>,
+    /// Titel und Bilder auch von internen Adressen abrufen.
+    pub allow_private_urls: bool,
 }
 
 impl Config {
@@ -43,6 +45,7 @@ impl Config {
         }
 
         let trust_proxy = bool_env("TRUST_PROXY")?;
+        let allow_private_urls = bool_env("ALLOW_PRIVATE_URLS")?;
 
         let allowed_hosts = env("ALLOWED_HOSTS")
             .map(|value| {
@@ -60,6 +63,7 @@ impl Config {
             log_level,
             trust_proxy,
             allowed_hosts,
+            allow_private_urls,
         })
     }
 
@@ -71,6 +75,7 @@ impl Config {
             log_level: "info".into(),
             trust_proxy: false,
             allowed_hosts: Vec::new(),
+            allow_private_urls: false,
         }
     }
 }

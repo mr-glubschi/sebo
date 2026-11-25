@@ -46,7 +46,10 @@ pub async fn headers(request: Request, next: Next) -> Response {
         HeaderValue::from_static("same-origin"),
     );
     if is_api {
-        headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        // Bilder setzen ihr eigenes Caching, alles andere wird nicht gecacht.
+        headers
+            .entry(header::CACHE_CONTROL)
+            .or_insert(HeaderValue::from_static("no-store"));
     }
     response
 }

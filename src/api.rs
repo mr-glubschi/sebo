@@ -24,6 +24,7 @@ pub fn router() -> Router<AppState> {
         .route("/auth/status", get(status))
         .route("/auth/login", post(login))
         .route("/auth/logout", post(logout))
+        .merge(crate::library_api::router())
         .fallback(|| async { ApiError::new(StatusCode::NOT_FOUND, "Nicht gefunden") })
 }
 
@@ -246,7 +247,7 @@ async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Result<Res
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::sync::Arc;
 
     use axum::{body::Body, http::Request};
@@ -258,9 +259,9 @@ mod tests {
     use super::*;
 
     const PASSWORD: &str = "ein-sicheres-passwort";
-    const HOST: &str = "sebo.test";
+    pub(crate) const HOST: &str = "sebo.test";
 
-    async fn test_state() -> AppState {
+    pub(crate) async fn test_state() -> AppState {
         let db = db::Db::open_in_memory().await.unwrap();
         db.call(|conn| {
             db::configure(conn).map_err(|error| error.to_string())?;
@@ -277,6 +278,9 @@ mod tests {
                 PasswordCheck::from_env_values(Some(PASSWORD.into()), None).unwrap(),
             ),
             login: Arc::new(tokio::sync::Mutex::new(Throttle::default())),
+            fetcher: Arc::new(crate::net::Fetcher::new(true).unwrap()),
+            worker: Default::default(),
+            images_dir: tempfile::tempdir().unwrap().keep(),
         }
     }
 
@@ -289,7 +293,7 @@ mod tests {
             .unwrap()
     }
 
-    async fn send(
+    pub(crate) async fn send(
         state: &AppState,
         request: Request<Body>,
     ) -> (StatusCode, HeaderMap, serde_json::Value) {

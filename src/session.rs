@@ -1,12 +1,34 @@
 //! Sitzungen: zufälliges Token im Cookie, in der Datenbank nur dessen Hash.
 
-use axum::http::{HeaderMap, header};
+use axum::{
+    extract::FromRequestParts,
+    http::{HeaderMap, StatusCode, header, request::Parts},
+};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::{
+    api::ApiError,
     crypto::{hex, random_bytes, sha256_hex},
     db::{Db, now_secs},
+    security::is_https,
+    state::AppState,
 };
+
+/// Extractor für Routen, die eine gültige Sitzung brauchen.
+pub struct Authenticated;
+
+impl FromRequestParts<AppState> for Authenticated {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
+        let https = is_https(&parts.headers, state.config.trust_proxy);
+        if is_authenticated(&state.db, &parts.headers, https).await? {
+            Ok(Self)
+        } else {
+            Err(ApiError::new(StatusCode::UNAUTHORIZED, "Nicht angemeldet"))
+        }
+    }
+}
 
 /// Nach 30 Tagen ohne Nutzung läuft eine Sitzung ab.
 pub const IDLE_TIMEOUT_SECS: i64 = 30 * 24 * 60 * 60;

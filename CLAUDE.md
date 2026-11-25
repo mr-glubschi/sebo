@@ -33,9 +33,11 @@ Selbst gehostete Bookmark-Verwaltung im Stil von Raindrop, bewusst auf das Minim
 
 - Backend: Rust, Axum, SQLite über `tokio-rusqlite` (eine Verbindung, WAL), `rusqlite_migration`, `reqwest` + `rustls`, `scraper`, `image`, `resvg`, `totp-rs`, `tracing`
 - Frontend: Svelte 5 + Vite + TypeScript als SPA (ohne SvelteKit), uFuzzy, einfaches CSS, vite-plugin-pwa
-- API-Typen werden mit `ts-rs` aus Rust erzeugt, nicht von Hand im Frontend pflegen
+- API-Typen werden mit `ts-rs` aus Rust erzeugt (`cargo test` schreibt sie nach `web/src/lib/bindings/`), nicht von Hand pflegen. Die CI prüft, dass sie aktuell sind. ts-rs ist nur Dev-Abhängigkeit (`cfg_attr(test, ...)`).
 - Frontend wird mit `rust-embed` in das Programm eingebettet
-- Bildabruf läuft im Hintergrund über `meta_status` in der DB (max. 4 parallel), übersteht Neustarts
+- Bildabruf läuft im Hintergrund über `meta_status` in der DB (max. 4 parallel), übersteht Neustarts. Status `skipped` = interne Adresse, nicht abgerufen.
+- Fremde URLs nur über `net::Fetcher` abrufen (SSRF-Schutz), nie direkt mit reqwest. TLS: rustls mit `ring` und `webpki-roots`.
+- Test mit echtem Internet: `cargo test -- --ignored`
 - Alle persistenten Daten liegen unter `/data` (ein Volume)
 - Container: Alpine, Entrypoint setzt Rechte für `PUID`/`PGID` (Standard 99/100) und wechselt per `su-exec`
 - Nur amd64, Image-Tags nach Semver über GitHub-Releases

@@ -8,7 +8,10 @@ use rusqlite_migration::{M, Migrations};
 /// Asynchroner Zugriff auf die eine Datenbankverbindung.
 pub type Db = tokio_rusqlite::Connection;
 
-const MIGRATIONS: &[M<'static>] = &[M::up(include_str!("../migrations/001_auth.sql"))];
+const MIGRATIONS: &[M<'static>] = &[
+    M::up(include_str!("../migrations/001_auth.sql")),
+    M::up(include_str!("../migrations/002_library.sql")),
+];
 
 fn migrations() -> Migrations<'static> {
     Migrations::from_slice(MIGRATIONS)

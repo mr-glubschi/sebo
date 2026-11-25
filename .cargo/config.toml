@@ -1,3 +1,6 @@
 # Nur für die lokale Entwicklung mit `cargo run`: Daten im Projektordner ablegen.
 [env]
 DATA_DIR = { value = "data", relative = true }
+
+# TypeScript-Typen der API, erzeugt von ts-rs bei `cargo test`.
+TS_RS_EXPORT_DIR = { value = "web/src/lib/bindings", relative = true }

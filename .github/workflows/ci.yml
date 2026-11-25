@@ -21,6 +21,13 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
+      - name: TypeScript-Typen der API aktuell?
+        run: |
+          if [ -n "$(git status --porcelain web/src/lib/bindings)" ]; then
+            git status --porcelain web/src/lib/bindings
+            echo "::error::web/src/lib/bindings ist veraltet. Lokal cargo test ausführen und committen."
+            exit 1
+          fi
 
   deny:
     name: Abhängigkeiten (cargo deny)
