@@ -125,7 +125,7 @@ Bilder: `/data/images/<id>-og.jpg`, `/data/images/<id>-icon.png`. Sicherungen: `
 - **Bilder** werden nur vom eigenen Server ausgeliefert, nie Originaldateien oder SVG.
 - **Frontend:** kein `{@html}`.
 - **Container:** `no-new-privileges`, nur nötige Capabilities (`CHOWN`, `SETUID`, `SETGID` für den Start), danach als `PUID:PGID`.
-- **Lieferkette:** `Cargo.lock` und `package-lock.json` committen, `cargo deny` und `npm audit` in der CI, Renovate, Basis-Images per Digest.
+- **Lieferkette:** `Cargo.lock` und `package-lock.json` committen, `cargo deny` und `npm audit` in der CI, Dependabot (kein App-Setup nötig), Basis-Images per Digest.
 
 ## Betrieb
 
@@ -142,14 +142,14 @@ Bilder: `/data/images/<id>-og.jpg`, `/data/images/<id>-icon.png`. Sicherungen: `
 - [x] **0a. Name und Repo:** Name festgelegt, GitHub-Repo angelegt
 - [x] **0b. Ordner umbenennen** (`code/Neuer Ordner` → `code/sebo`)
 - [x] **0c. Architektur festlegen** (mit Review aus Sicht Security, Backend, Frontend, Betrieb)
-- [ ] **0d. Grundgerüst:** Cargo-Projekt, Vite/Svelte-Projekt, Dockerfile mit cargo-chef, CI-Grundgerüst
+- [x] **0d. Grundgerüst:** Cargo-Projekt, Vite/Svelte-Projekt, Dockerfile mit cargo-chef, Entrypoint mit PUID/PGID, Healthcheck, CI, Release-Workflow, cargo deny, Dependabot
 - [ ] **1. Login:** Passwort/Hash, TOTP-Einrichtung mit QR-Code im Log, Wiederherstellungscodes, `reset-2fa`, `hash-password`, Fehlversuchs-Wartezeit, Sessions, CSRF, Header
 - [ ] **2. API:** Ordner und Bookmarks, Metadaten- und Bildabruf mit SSRF-Schutz, Hintergrund-Abruf
 - [ ] **3. Oberfläche:** Login-Seite, 2FA-Einrichtung, Seitenleiste, drei Ansichten, „+“-Dialog, Bearbeiten-Dialog, Routing
 - [ ] **4. Drag & Drop und Suche:** Links hineinziehen, auf Ordner ziehen, „Verschieben nach …“, Live-Suche
 - [ ] **5. Import und Export**
 - [ ] **6. Handy:** responsive Layout, PWA, Share Target
-- [ ] **7. Betrieb:** Entrypoint mit PUID/PGID, Healthcheck, tägliche Sicherung, Unraid-Template, Release-Workflow mit Tags, `cargo deny`, Renovate, README fertigstellen
+- [ ] **7. Betrieb:** tägliche Sicherung, Unraid-Template, Basis-Images per Digest pinnen, Container-Härtung im Template, README fertigstellen, erstes Release taggen
 - [ ] **8. Abschluss:** Test auf Unraid, Plan.md löschen
 
 ## Bewusst nicht umgesetzt

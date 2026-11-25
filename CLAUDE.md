@@ -43,3 +43,12 @@ Selbst gehostete Bookmark-Verwaltung im Stil von Raindrop, bewusst auf das Minim
 
 - `README.md`: Funktionsbeschreibung und Installation auf Unraid, für das GitHub-Repo. Bei neuen Funktionen oder Umgebungsvariablen aktualisieren.
 - `Plan.md`: nur während der Erstumsetzung, wird danach gelöscht. Nichts Dauerhaftes dort ablegen.
+
+## Entwicklung
+
+- Aufbau: Rust-Backend im Projektwurzelverzeichnis (`src/`), Svelte-Frontend in `web/`, Docker-Dateien in `docker/`.
+- Backend starten: `cargo run` (Daten landen dank `.cargo/config.toml` in `./data`).
+- Frontend mit Hot Reload: `cd web && npm run dev`, leitet `/api` an `127.0.0.1:8080` weiter.
+- Vor jedem Commit: `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo deny check`, in `web/`: `npm run check`.
+- TypeScript bleibt auf Version 6, bis `svelte-check` TypeScript 7 ohne Umwege unterstützt.
+- Updates kommen über Dependabot. Release: Tag `vX.Y.Z` pushen, GitHub Actions baut und veröffentlicht das Image.

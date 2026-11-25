@@ -1,0 +1,13 @@
+#!/bin/sh
+# Wird über die Namen reset-2fa und hash-password aufgerufen, z. B.
+# `docker exec sebo reset-2fa`. Läuft als PUID:PGID, damit die Dateien
+# in /data nicht root gehören.
+set -eu
+
+command="$(basename "$0")"
+
+if [ "$(id -u)" = "0" ]; then
+  exec su-exec "${PUID:-99}:${PGID:-100}" /usr/local/bin/sebo "$command" "$@"
+fi
+
+exec /usr/local/bin/sebo "$command" "$@"

@@ -1,0 +1,3 @@
+# Nur für die lokale Entwicklung mit `cargo run`: Daten im Projektordner ablegen.
+[env]
+DATA_DIR = { value = "data", relative = true }
