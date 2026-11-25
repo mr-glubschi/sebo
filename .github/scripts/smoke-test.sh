@@ -5,6 +5,8 @@ set -eu
 
 IMAGE="${1:-sebo:test}"
 DATA="$(mktemp -d)"
+# Wie ein neuer appdata-Ordner auf Unraid (mktemp legt 700 an)
+chmod 755 "$DATA"
 BASE="http://127.0.0.1:8080"
 JAR="$(mktemp)"
 

@@ -12,7 +12,12 @@ if [ "$(id -u)" = "0" ]; then
   # Nur bei abweichendem Besitzer alles umstellen (spart Zeit bei vielen Bildern).
   if [ "$(stat -c '%u:%g' "$DATA_DIR")" != "$PUID:$PGID" ]; then
     echo "Setze Besitzer von $DATA_DIR auf $PUID:$PGID"
-    chown -R -h "$PUID:$PGID" "$DATA_DIR"
+    if ! chown -R -h "$PUID:$PGID" "$DATA_DIR"; then
+      echo "FEHLER: Rechte auf $DATA_DIR konnten nicht gesetzt werden." >&2
+      echo "Der Ordner auf dem Host muss für root lesbar sein (z. B. chmod 755) oder" >&2
+      echo "schon $PUID:$PGID gehören (chown -R $PUID:$PGID <ordner>)." >&2
+      exit 1
+    fi
   fi
   exec su-exec "$PUID:$PGID" /usr/local/bin/sebo "$@"
 fi
