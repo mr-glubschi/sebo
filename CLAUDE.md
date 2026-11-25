@@ -6,28 +6,38 @@ Selbst gehostete Bookmark-Verwaltung im Stil von Raindrop, bewusst auf das Minim
 
 ## Grundsätze
 
-- **Minimal bleiben.** Neue Funktionen nur nach Rücksprache. Kein Tagging, keine Volltextsuche, keine Notizen, keine Sync-Erweiterungen.
+- **Minimal bleiben.** Neue Funktionen nur nach Rücksprache. Kein Tagging, keine Volltextsuche, keine Notizen, keine Sync-Erweiterungen, keine manuelle Sortierung, kein Offline-Modus.
 - **Ein Benutzer pro Container.** Mehrere Benutzer = mehrere Container. Kein Benutzerverwaltungs-Code.
 - **Keine Seiteninhalte speichern.** Gespeichert werden nur Titel, URL, OG-Bild und Favicon. Kein Text, kein HTML, keine Archivierung.
-- **Bilder:** OG-Bild zuerst, Favicon als Ausweichlösung und für Liste/Kompakt-Ansicht. Keine Screenshots per Headless-Browser (würde das Image stark vergrößern).
+- **Bilder:** OG-Bild zuerst, Favicon als Ausweichlösung und für Liste/Kompakt-Ansicht. Keine Screenshots per Headless-Browser. Gespeichert als JPEG (OG) und PNG (Favicon), immer neu kodiert.
 - **Import/Export nur im Netscape-HTML-Format.** Keine anbieterspezifischen Formate.
-- **Muss am Handy funktionieren.** Jede Oberflächenänderung auch auf schmalen Bildschirmen prüfen.
+- **Muss am Handy funktionieren.** Jede Oberflächenänderung auch auf schmalen Bildschirmen und per Touch prüfen.
+- **Wenige Abhängigkeiten.** Bei Crates nur die nötigen Features aktivieren. Kleine Dinge (Sessions, Routing, Drag & Drop) lieber selbst schreiben als eine Bibliothek dazunehmen.
 
 ## Sicherheit
 
-- Login = Passwort aus Umgebungsvariable `PASSWORD` + TOTP.
-- Der TOTP-QR-Code wird nur ins Docker-Log geschrieben, solange die Einrichtung nicht bestätigt ist. Nach der Bestätigung nie wieder.
+- Login = Passwort (`PASSWORD` oder argon2-`PASSWORD_HASH`) + TOTP. Passwort unter 12 Zeichen → Container startet nicht.
+- Der TOTP-QR-Code wird nur ins Log geschrieben, solange die Einrichtung nicht bestätigt ist. Nach der Bestätigung nie wieder.
 - Zurücksetzen nur über `docker exec <container> reset-2fa`, nicht über die Weboberfläche.
-- Wiederherstellungscodes und Geheimnisse niemals im Klartext loggen (Ausnahme: QR-Code bei der Ersteinrichtung).
-- Passwortvergleich in konstanter Zeit. Fehlversuchssperre nicht entfernen.
+- Geheimnisse und Codes niemals im Klartext loggen (Ausnahme: QR-Code bei der Ersteinrichtung).
+- Vergleiche in konstanter Zeit (`subtle`). In der DB nur Hashes von Session-Tokens und Wiederherstellungscodes.
+- Fehlversuche: globale, ansteigende Wartezeit. Nicht entfernen, nicht auf IP-basiert umstellen.
+- Session-Cookie `SameSite=Lax` + `Origin`-Prüfung bei ändernden Anfragen (nicht `Strict`, sonst bricht das Öffnen per Link und Share Target).
+- **SSRF:** Jeder Abruf fremder URLs geht durch die zentrale Abruf-Funktion mit IP-Prüfung nach DNS-Auflösung, festgelegter IP und einzeln geprüften Weiterleitungen. Interne Adressen nur mit `ALLOW_PRIVATE_URLS=true`. Bookmarks auf interne Adressen dürfen trotzdem immer gespeichert werden.
+- Alle fremden Eingaben begrenzen (HTML 1 MB, Bild 5 MB + Pixel-Limit, SVG ohne externe Ressourcen, Importgröße).
+- Strikte CSP, kein Inline-Skript, kein `{@html}` im Frontend. Bilder nur vom eigenen Server ausliefern, nie SVG.
 
 ## Technik
 
-- Backend: Node.js 22, TypeScript, Fastify, SQLite (`better-sqlite3`)
-- Frontend: Svelte + Vite, Suche mit Fuse.js im Browser
-- Bilder: `sharp`, gespeichert als WebP unter `/data/images/`
+- Backend: Rust, Axum, SQLite über `tokio-rusqlite` (eine Verbindung, WAL), `rusqlite_migration`, `reqwest` + `rustls`, `scraper`, `image`, `resvg`, `totp-rs`, `tracing`
+- Frontend: Svelte 5 + Vite + TypeScript als SPA (ohne SvelteKit), uFuzzy, einfaches CSS, vite-plugin-pwa
+- API-Typen werden mit `ts-rs` aus Rust erzeugt, nicht von Hand im Frontend pflegen
+- Frontend wird mit `rust-embed` in das Programm eingebettet
+- Bildabruf läuft im Hintergrund über `meta_status` in der DB (max. 4 parallel), übersteht Neustarts
 - Alle persistenten Daten liegen unter `/data` (ein Volume)
-- Container läuft als `99:100` (Unraid-Standard)
+- Container: Alpine, Entrypoint setzt Rechte für `PUID`/`PGID` (Standard 99/100) und wechselt per `su-exec`
+- Nur amd64, Image-Tags nach Semver über GitHub-Releases
+- Kein Subpath-Betrieb
 
 ## Dokumentation
 

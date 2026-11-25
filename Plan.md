@@ -11,97 +11,150 @@ Schlanke, selbst gehostete Bookmark-Verwaltung im Stil von Raindrop, reduziert a
 ## Funktionsumfang
 
 1. **Login mit Passwort + 2FA (TOTP)**
-   - Passwort kommt aus der Umgebungsvariable `PASSWORD` (Unraid-Template, Feld maskiert).
-   - Beim ersten Start: TOTP-Geheimnis erzeugen, QR-Code als ASCII ins Docker-Log schreiben.
+   - Passwort aus `PASSWORD` (Klartext) oder `PASSWORD_HASH` (argon2, erzeugt mit `docker exec sebo hash-password`). Fehlt beides oder ist das Passwort kürzer als 12 Zeichen, startet der Container nicht.
+   - Beim ersten Start: TOTP-Geheimnis erzeugen, QR-Code (Unicode) und `otpauth://`-URL ins Log schreiben, mit Hinweis, dass beides nach der Bestätigung verschwindet.
    - QR-Code erscheint nur, bis die Einrichtung im Browser mit einem gültigen Code bestätigt wurde.
-   - Nach der Bestätigung: 10 Wiederherstellungscodes einmalig anzeigen (gehasht gespeichert, je einmal nutzbar).
-   - `docker exec <container> reset-2fa` setzt 2FA zurück, danach erscheint ein neuer QR-Code im Log.
-   - Sperre nach mehreren Fehlversuchen (z. B. 5 Versuche → 15 Minuten Pause, ansteigend).
-   - Session-Cookie: `HttpOnly`, `SameSite=Strict`, `Secure` wenn per HTTPS aufgerufen. Gültig 30 Tage.
+   - Danach 10 Wiederherstellungscodes einmalig anzeigen (SHA-256-gehasht gespeichert, je einmal nutzbar).
+   - Jeder TOTP-Code wird nur einmal angenommen (Zeitfenster ±1).
+   - `docker exec sebo reset-2fa` setzt 2FA zurück (läuft als Zielbenutzer), neuer QR-Code im Log, kein Neustart nötig.
+   - Fehlversuche: globale, ansteigende Wartezeit statt harter Sperre.
 2. **Bookmarks hinzufügen**
-   - Drag & Drop eines Links auf die Seite (`text/uri-list` bzw. `text/plain`). Ablage auf einem Ordner speichert direkt dort.
-   - „+“-Button mit Formular: URL, Name, Ordner. Titel und Bild werden aus der URL vorausgefüllt, alles überschreibbar.
-   - Server holt Metadaten: `<title>` / `og:title`, `og:image`, Favicon (`<link rel="icon">`, sonst `/favicon.ico`).
-   - Kein Seitentext und kein HTML wird gespeichert, nur Titel, URL und Bilder.
+   - Drag & Drop eines Links auf die ganze Seite (`text/uri-list`, `text/plain`; Titel aus `text/x-moz-url` bzw. `text/html` als Vorschlag). Ablage auf einem Ordner speichert direkt dort.
+   - „+“-Button mit Formular: URL, Name, Ordner, Einfügen-Button für die Zwischenablage. Titel und Bild werden vorausgefüllt, alles überschreibbar.
+   - Bookmarks auf interne Adressen sind immer speicherbar; nur der automatische Abruf ist standardmäßig gesperrt (siehe Sicherheit).
+   - Gespeichert werden nur Titel, URL und Bilder. Kein Seitentext, kein HTML.
 3. **Ansichten**
    - Karten: OG-Bild groß, darunter Favicon, Name und Domain.
    - Liste: Favicon, Name, URL und Ordner in einer Zeile.
    - Kompakt: nur Favicon und Name.
-   - Ausweichkette für Bilder: OG-Bild → Favicon groß → farbiger Anfangsbuchstabe.
-   - Gewählte Ansicht wird im Browser gemerkt.
+   - Ausweichkette: OG-Bild → Favicon groß → farbiger Anfangsbuchstabe.
+   - Sortierung nach Name oder Datum, keine manuelle Reihenfolge.
+   - Gewählte Ansicht und Sortierung werden im Browser gemerkt.
 4. **Ordner mit Unterordnern**
    - Ordnerbaum in der Seitenleiste, beliebig tief.
-   - Ordner anlegen, umbenennen, löschen (mit Rückfrage: Inhalt mitlöschen oder in den übergeordneten Ordner verschieben).
-   - Bookmarks und Ordner per Drag & Drop verschieben.
+   - Anlegen, umbenennen, löschen (Rückfrage: Inhalt mitlöschen oder in den übergeordneten Ordner verschieben).
+   - Bookmarks und Ordner auf einen Ordner ziehen (eigene Umsetzung mit Pointer Events, Maus und Touch, langes Drücken startet das Ziehen).
+   - Zusätzlich „Verschieben nach …“ mit Ordnerauswahl, vor allem fürs Handy.
    - Bookmarks ohne Ordner landen in „Unsortiert“.
+   - Aktueller Ordner steht in der URL (`/f/<id>`), damit die Zurück-Taste funktioniert.
 5. **Bearbeiten, Löschen, Live-Suche**
    - Name, URL, Ordner bearbeiten; Vorschaubild neu laden oder entfernen.
-   - Unscharfe Suche über Name und URL, Treffer erscheinen beim Tippen.
+   - Unscharfe Suche mit uFuzzy (`intraMode: 1`) über Name und Domain, Treffer beim Tippen.
    - Alle Bookmarks werden beim Start in den Browser geladen und dort durchsucht.
 6. **HTML-Import und -Export**
-   - Netscape-Bookmark-Format (Standard aller Browser und von Raindrop).
-   - Ordnerstruktur bleibt erhalten. Beim Import werden Bilder im Hintergrund nachgeladen.
-   - Doppelte URLs beim Import überspringen.
+   - Netscape-Bookmark-Format, Ordnerstruktur bleibt erhalten.
+   - Import: Größenlimit, maximale Anzahl Einträge, nur `http(s)`-URLs, doppelte URLs überspringen. Bilder werden im Hintergrund nachgeladen.
+   - Export: alle Texte HTML-maskiert.
 7. **Handy**
-   - Responsive Oberfläche, Seitenleiste wird zum ausklappbaren Menü.
-   - Installierbar als PWA (Manifest + Service Worker).
-   - Android: Web Share Target, Links über „Teilen“ direkt speichern.
-   - iPhone: kein Share Target möglich; „+“-Dialog mit Einfügen-Button aus der Zwischenablage.
+   - Responsive Oberfläche, Seitenleiste als ausklappbares Menü.
+   - PWA (vite-plugin-pwa): cacht nur die App-Hülle, keine API-Antworten, kein Offline-Modus.
+   - Android: Web Share Target per `GET /share`; URL in `url`, `text` oder `title` suchen; Bestätigungsdialog vor dem Speichern.
+   - iPhone: kein Share Target; „+“-Dialog mit Einfügen-Button. Installierte Web-App braucht eigenen Login (eigene Cookies).
 
 ## Technik
 
+### Backend (Rust)
+
+| Bereich | Wahl | Hinweise |
+|---|---|---|
+| Webserver | Axum + `tower-http` | Body-Limits, Timeouts, Kompression |
+| Datenbank | SQLite über `tokio-rusqlite` (rusqlite, `bundled`) | eine Verbindung, WAL-Modus, `busy_timeout`, nur parametrisierte Abfragen |
+| Migrationen | `rusqlite_migration` | vor jeder Migration Sicherungskopie |
+| HTTP-Client | `reqwest` ohne Standard-Features, `rustls` + `webpki-roots` | Größenlimit beim Lesen erzwingen, eigener User-Agent |
+| HTML | `scraper` | nur die ersten 1 MB |
+| Bilder | `image` (nur jpeg, png, gif, webp lesen, ico) | Decoder-Limits, immer neu kodieren; OG-Bild JPEG Q80 max. 600 px, Favicon PNG 64 px |
+| SVG-Favicons | `resvg` | nur als letzte Wahl, keine externen Ressourcen, kein Text/Systemschriften, Größen-/Zeitlimit |
+| 2FA | `totp-rs` (`otpauth`, `gen_secret`), `qrcode` (Unicode) | |
+| Hashes | `sha2` + `subtle` (Passwort-Vergleich, Wiederherstellungscodes, Session-Tokens), `argon2` nur für `PASSWORD_HASH` | |
+| Frontend einbetten | `rust-embed` | unbekannte Pfade → `index.html` |
+| Logging | `tracing` | nur stdout, `LOG_LEVEL` |
+| Typen fürs Frontend | `ts-rs` | erzeugt TypeScript-Typen der API |
+| Unterbefehle | über `argv[0]` / erstes Argument, ohne `clap` | `serve`, `reset-2fa`, `hash-password` |
+
+Release-Profil: `strip = true`, `lto = "thin"`. Ziel: `x86_64-unknown-linux-musl`.
+
+### Frontend
+
 | Bereich | Wahl |
 |---|---|
-| Laufzeit | Node.js 22 LTS, TypeScript |
-| Webserver | Fastify |
-| Datenbank | SQLite (`better-sqlite3`), Datei unter `/data/app.db` |
-| 2FA | `otplib` (TOTP), `qrcode-terminal` für den QR-Code im Log |
-| Metadaten | `fetch` + `cheerio`, nur der `<head>` wird ausgewertet |
-| Bilder | `sharp`, Umwandlung in WebP, OG-Bild max. 600 px breit, Favicon 64 px |
-| Frontend | Svelte + Vite, als statische Dateien vom Fastify-Server ausgeliefert |
-| Suche | Fuse.js im Browser |
-| Container | `node:22-alpine`, Multi-Stage-Build, läuft als `99:100` (Unraid nobody:users) |
-| Veröffentlichung | GitHub Actions baut das Image und schiebt es nach GHCR |
+| Framework | Svelte 5 + Vite, Single-Page-App ohne SvelteKit, TypeScript |
+| Routing | eigenes kleines Routing über die History-API |
+| Suche | uFuzzy |
+| Drag & Drop | nativ für Links von außen, eigene Pointer-Events-Umsetzung für Verschieben |
+| Styling | einfaches CSS mit CSS-Variablen (Dunkelmodus), Kartenraster mit CSS Grid |
+| Bilder | `loading="lazy"`, `decoding="async"`, festes `aspect-ratio`, `content-visibility: auto` |
+| PWA | vite-plugin-pwa |
 
 ### Datenmodell
 
 ```
-folders    id, parent_id (NULL = oberste Ebene), name, position, created_at
-bookmarks  id, folder_id (NULL = Unsortiert), title, url, image, favicon, position, created_at, updated_at
-settings   key, value   (totp_secret, totp_confirmed, recovery_codes, ...)
-sessions   id, expires_at
+folders    id, parent_id (NULL = oberste Ebene), name, created_at
+bookmarks  id, folder_id (NULL = Unsortiert), title, url, image, favicon,
+           meta_status (pending|done|failed), created_at, updated_at
+settings   key, value   (totp_secret, totp_confirmed, totp_last_step, recovery_codes, ...)
+sessions   token_hash, created_at, last_seen_at, expires_at
 ```
 
-Bilder liegen unter `/data/images/<bookmark-id>-og.webp` und `/data/images/<bookmark-id>-icon.webp`.
+Bilder: `/data/images/<id>-og.jpg`, `/data/images/<id>-icon.png`. Sicherungen: `/data/backups/`.
+
+### Hintergrund-Abruf
+
+- Neue und importierte Bookmarks bekommen `meta_status = pending`.
+- Ein Arbeitsprozess holt offene Einträge, maximal 4 Abrufe gleichzeitig.
+- Nach einem Neustart läuft er bei den offenen Einträgen weiter.
 
 ### Umgebungsvariablen
 
 | Variable | Pflicht | Standard | Zweck |
 |---|---|---|---|
-| `PASSWORD` | ja | – | Login-Passwort |
-| `PORT` | nein | `8080` | Port im Container |
+| `PASSWORD` | eins von beiden | – | Login-Passwort im Klartext |
+| `PASSWORD_HASH` | eins von beiden | – | argon2-Hash des Passworts |
+| `PUID` / `PGID` | nein | `99` / `100` | Benutzer und Gruppe für `/data` |
 | `TZ` | nein | `Europe/Berlin` | Zeitzone |
+| `TRUST_PROXY` | nein | `false` | `X-Forwarded-*` auswerten (Secure-Cookie, Log-IP) |
+| `ALLOW_PRIVATE_URLS` | nein | `false` | Metadaten auch von internen Adressen abrufen |
+| `LOG_LEVEL` | nein | `info` | Ausführlichkeit des Logs |
+| `PORT` | nein | `8080` | Port im Container |
 
-### Sicherheit beim Abruf fremder Seiten
+## Sicherheit
 
-- Zeitlimit 5 Sekunden, maximal 1 MB HTML und 5 MB pro Bild.
-- Nur `http` und `https`.
-- Weiterleitungen begrenzt (max. 5).
+- **SSRF:** eigener DNS-Resolver, aufgelöste IP prüfen (privat, Loopback, Link-Local, CGNAT, Multicast, ULA, `169.254.169.254` gesperrt, außer `ALLOW_PRIVATE_URLS=true`), Verbindung auf die geprüfte IP festlegen, Weiterleitungen manuell folgen (max. 5) und jedes Ziel neu prüfen, nur `http(s)`, Zeitlimit 5 s, max. 1 MB HTML, 5 MB pro Bild.
+- **Sessions:** 32 Zufallsbytes, in der DB nur SHA-256-Hash, Cookie `HttpOnly`, `SameSite=Lax`, `Secure` + `__Host-`-Präfix bei HTTPS, Ablauf bei Inaktivität (30 Tage), Logout löscht die Session, neue Session nach Login.
+- **CSRF:** `Origin`-Prüfung bei allen ändernden Anfragen, JSON nur mit `Content-Type: application/json`.
+- **Header:** strikte CSP (`default-src 'self'`, kein Inline-Skript), `X-Content-Type-Options: nosniff`, `frame-ancestors 'none'`, `Referrer-Policy: no-referrer`.
+- **Bilder** werden nur vom eigenen Server ausgeliefert, nie Originaldateien oder SVG.
+- **Frontend:** kein `{@html}`.
+- **Container:** `no-new-privileges`, nur nötige Capabilities (`CHOWN`, `SETUID`, `SETGID` für den Start), danach als `PUID:PGID`.
+- **Lieferkette:** `Cargo.lock` und `package-lock.json` committen, `cargo deny` und `npm audit` in der CI, Renovate, Basis-Images per Digest.
+
+## Betrieb
+
+- Basis-Image Alpine (Shell für Unraid-Konsole, `tzdata`, `su-exec`).
+- Entrypoint: Rechte auf `/data` für `PUID:PGID` setzen, dann per `su-exec` wechseln.
+- Healthcheck `/healthz` (ohne Login) + `HEALTHCHECK` im Dockerfile.
+- Täglicher Snapshot per `VACUUM INTO` nach `/data/backups/sebo-YYYYMMDD.db`, 7 Stände.
+- Image-Tags: `latest`, `1`, `1.2`, `1.2.3` über GitHub-Release-Tags. Nur amd64.
+- Kein Subpath-Betrieb, nur eigene Subdomain hinter Reverse Proxy.
+- Unraid-Template `unraid/sebo.xml` (Icon, Support, WebUI, `PASSWORD` maskiert, Kategorie Tools/Productivity).
 
 ## Phasen
 
 - [x] **0a. Name und Repo:** Name festgelegt, GitHub-Repo angelegt
-- [ ] **0b. Ordner umbenennen** (`code/Neuer Ordner` → `code/sebo`)
-- [ ] **0c. Grundgerüst:** (Backend, Frontend, Docker)
-- [ ] **1. Login:** Passwort, TOTP-Einrichtung mit QR-Code im Log, Wiederherstellungscodes, `reset-2fa`, Fehlversuchssperre, Sessions
-- [ ] **2. API:** Ordner und Bookmarks (anlegen, lesen, ändern, löschen, verschieben), Metadaten- und Bildabruf
-- [ ] **3. Oberfläche:** Login-Seite, Seitenleiste mit Ordnerbaum, drei Ansichten, „+“-Dialog, Bearbeiten-Dialog
-- [ ] **4. Drag & Drop und Suche:** Links hineinziehen, Bookmarks und Ordner verschieben, Live-Suche
-- [ ] **5. Import und Export:** HTML-Import mit Ordnerstruktur, HTML-Export
+- [x] **0b. Ordner umbenennen** (`code/Neuer Ordner` → `code/sebo`)
+- [x] **0c. Architektur festlegen** (mit Review aus Sicht Security, Backend, Frontend, Betrieb)
+- [ ] **0d. Grundgerüst:** Cargo-Projekt, Vite/Svelte-Projekt, Dockerfile mit cargo-chef, CI-Grundgerüst
+- [ ] **1. Login:** Passwort/Hash, TOTP-Einrichtung mit QR-Code im Log, Wiederherstellungscodes, `reset-2fa`, `hash-password`, Fehlversuchs-Wartezeit, Sessions, CSRF, Header
+- [ ] **2. API:** Ordner und Bookmarks, Metadaten- und Bildabruf mit SSRF-Schutz, Hintergrund-Abruf
+- [ ] **3. Oberfläche:** Login-Seite, 2FA-Einrichtung, Seitenleiste, drei Ansichten, „+“-Dialog, Bearbeiten-Dialog, Routing
+- [ ] **4. Drag & Drop und Suche:** Links hineinziehen, auf Ordner ziehen, „Verschieben nach …“, Live-Suche
+- [ ] **5. Import und Export**
 - [ ] **6. Handy:** responsive Layout, PWA, Share Target
-- [ ] **7. Auslieferung:** Dockerfile final, Unraid-Template, GitHub Actions, README fertigstellen
+- [ ] **7. Betrieb:** Entrypoint mit PUID/PGID, Healthcheck, tägliche Sicherung, Unraid-Template, Release-Workflow mit Tags, `cargo deny`, Renovate, README fertigstellen
 - [ ] **8. Abschluss:** Test auf Unraid, Plan.md löschen
 
-## Offene Punkte
+## Bewusst nicht umgesetzt
 
-- keine
+- `PASSWORD_FILE` (unter Unraid unüblich)
+- iOS-Kurzbefehle mit API-Token (neue Funktion)
+- arm64-Image, Image-Signierung und SBOM (später bei Bedarf)
+- Manuelle Sortierung, virtuelles Scrollen, Offline-Modus, Subpath-Betrieb
