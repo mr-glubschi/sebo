@@ -21,7 +21,9 @@ Selbst gehostete Bookmark-Verwaltung im Stil von Raindrop, bewusst auf das Minim
 - Zurücksetzen nur über `docker exec <container> reset-2fa`, nicht über die Weboberfläche.
 - Geheimnisse und Codes niemals im Klartext loggen (Ausnahme: QR-Code bei der Ersteinrichtung).
 - Vergleiche in konstanter Zeit (`subtle`). In der DB nur Hashes von Session-Tokens und Wiederherstellungscodes.
-- Fehlversuche: globale, ansteigende Wartezeit. Nicht entfernen, nicht auf IP-basiert umstellen.
+- Fehlversuche: globale, ansteigende Wartezeit. Nicht entfernen, nicht auf IP-basiert umstellen. Fehlversuche mit richtigem Passwort und falschem Code zählen zusätzlich 24 h lang und werden durch einen erfolgreichen Login nicht zurückgesetzt (Schutz gegen langsames Durchprobieren der TOTP-Codes).
+- Login: Bei falschem Passwort läuft eine Scheinprüfung des Codes (gleiche Antwortzeit). Codeprüfung und Anlegen der Sitzung in einer Transaktion.
+- Bei HTTPS nur das `__Host-`-Cookie akzeptieren. Optionale `ALLOWED_HOSTS` gegen DNS-Rebinding.
 - Session-Cookie `SameSite=Lax` + `Origin`-Prüfung bei ändernden Anfragen (nicht `Strict`, sonst bricht das Öffnen per Link und Share Target).
 - **SSRF:** Jeder Abruf fremder URLs geht durch die zentrale Abruf-Funktion mit IP-Prüfung nach DNS-Auflösung, festgelegter IP und einzeln geprüften Weiterleitungen. Interne Adressen nur mit `ALLOW_PRIVATE_URLS=true`. Bookmarks auf interne Adressen dürfen trotzdem immer gespeichert werden.
 - Alle fremden Eingaben begrenzen (HTML 1 MB, Bild 5 MB + Pixel-Limit, SVG ohne externe Ressourcen, Importgröße).

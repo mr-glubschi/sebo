@@ -1,6 +1,9 @@
 //! Sicherheits-Header, CSRF-Schutz und Wartezeit nach Fehlversuchen.
 
-use std::time::{Duration, Instant};
+use std::{
+    collections::VecDeque,
+    time::{Duration, Instant},
+};
 
 use axum::{
     extract::{Request, State},
@@ -103,16 +106,63 @@ pub fn is_https(headers: &HeaderMap, trust_proxy: bool) -> bool {
             .is_some_and(|proto| proto.trim().eq_ignore_ascii_case("https"))
 }
 
+/// Optionale Liste erlaubter Hostnamen (`ALLOWED_HOSTS`). Schützt vor
+/// DNS-Rebinding: Eine fremde Domain, die auf SEBO im Heimnetz zeigt,
+/// wird abgewiesen. `/healthz` bleibt immer erreichbar (Docker-Healthcheck).
+pub async fn allowed_host(State(state): State<AppState>, request: Request, next: Next) -> Response {
+    let allowed = &state.config.allowed_hosts;
+    if allowed.is_empty() || request.uri().path() == "/healthz" {
+        return next.run(request).await;
+    }
+    let host = expected_host(request.headers(), state.config.trust_proxy);
+    if host.is_some_and(|host| host_allowed(host, allowed)) {
+        next.run(request).await
+    } else {
+        tracing::warn!("Anfrage abgewiesen: Host {host:?} steht nicht in ALLOWED_HOSTS");
+        ApiError::new(StatusCode::MISDIRECTED_REQUEST, "Unbekannter Host").into_response()
+    }
+}
+
+/// Ein Eintrag passt auf den Host mit oder ohne Port.
+fn host_allowed(host: &str, allowed: &[String]) -> bool {
+    let host = host.to_ascii_lowercase();
+    let without_port = strip_port(&host);
+    allowed
+        .iter()
+        .any(|entry| *entry == host || *entry == without_port)
+}
+
+fn strip_port(host: &str) -> &str {
+    if host.starts_with('[') {
+        // IPv6: [::1]:8080
+        return host
+            .split_once("]:")
+            .map_or(host, |(ip, _)| &host[..=ip.len()]);
+    }
+    match host.rsplit_once(':') {
+        Some((name, port)) if port.bytes().all(|b| b.is_ascii_digit()) => name,
+        _ => host,
+    }
+}
+
 /// Globale, ansteigende Wartezeit nach fehlgeschlagenen Logins. Bewusst
 /// nicht pro IP: Bei einem Benutzer ist das robust und nicht durch
 /// gefälschte Proxy-Header zu umgehen.
+///
+/// Zusätzlich werden Fehlversuche mit richtigem Passwort, aber falschem
+/// Code über 24 Stunden gezählt. Ein erfolgreicher Login setzt diese
+/// Zählung nicht zurück, damit jemand, der das Passwort kennt, den
+/// TOTP-Code nicht langsam durchprobieren kann.
 #[derive(Debug, Default)]
 pub struct Throttle {
     failures: u32,
+    code_failures: VecDeque<Instant>,
     blocked_until: Option<Instant>,
 }
 
 pub const MAX_DELAY: Duration = Duration::from_secs(300);
+pub const MAX_CODE_DELAY: Duration = Duration::from_secs(60 * 60);
+const CODE_WINDOW: Duration = Duration::from_secs(24 * 60 * 60);
 
 impl Throttle {
     pub fn wait_time(&self, now: Instant) -> Option<Duration> {
@@ -121,24 +171,45 @@ impl Throttle {
             .filter(|wait| !wait.is_zero())
     }
 
+    /// Falsches Passwort.
     pub fn record_failure(&mut self, now: Instant) {
         self.failures = self.failures.saturating_add(1);
-        let delay = delay_for(self.failures);
-        self.blocked_until = (!delay.is_zero()).then(|| now + delay);
+        self.update_block(now);
+    }
+
+    /// Richtiges Passwort, falscher Code.
+    pub fn record_code_failure(&mut self, now: Instant) {
+        self.failures = self.failures.saturating_add(1);
+        self.code_failures.push_back(now);
+        self.update_block(now);
     }
 
     pub fn record_success(&mut self) {
-        *self = Self::default();
+        self.failures = 0;
+        self.blocked_until = None;
+    }
+
+    fn update_block(&mut self, now: Instant) {
+        while self
+            .code_failures
+            .front()
+            .is_some_and(|first| now.duration_since(*first) > CODE_WINDOW)
+        {
+            self.code_failures.pop_front();
+        }
+        let delay = delay_for(self.failures, MAX_DELAY)
+            .max(delay_for(self.code_failures.len() as u32, MAX_CODE_DELAY));
+        self.blocked_until = (!delay.is_zero()).then(|| now + delay);
     }
 }
 
-/// Die ersten 3 Fehlversuche ohne Wartezeit, danach 2, 4, 8 … Sekunden, höchstens 5 Minuten.
-fn delay_for(failures: u32) -> Duration {
+/// Die ersten 3 Fehlversuche ohne Wartezeit, danach 2, 4, 8 … Sekunden bis `max`.
+fn delay_for(failures: u32, max: Duration) -> Duration {
     if failures <= 3 {
         return Duration::ZERO;
     }
     let exponent = (failures - 3).min(16);
-    Duration::from_secs(2u64.pow(exponent)).min(MAX_DELAY)
+    Duration::from_secs(2u64.pow(exponent)).min(max)
 }
 
 #[cfg(test)]
@@ -146,13 +217,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn code_fehlversuche_bleiben_nach_erfolg() {
+        let now = Instant::now();
+        let mut throttle = Throttle::default();
+        // Angreifer kennt das Passwort: 3 falsche Codes, dann ein echter Login.
+        for _ in 0..3 {
+            throttle.record_code_failure(now);
+        }
+        throttle.record_success();
+        // Der nächste falsche Code führt trotzdem sofort zu einer Wartezeit.
+        throttle.record_code_failure(now);
+        assert_eq!(throttle.wait_time(now), Some(Duration::from_secs(2)));
+        // Nach 24 Stunden zählen alte Fehlversuche nicht mehr.
+        let later = now + CODE_WINDOW + Duration::from_secs(1);
+        throttle.record_success();
+        throttle.record_code_failure(later);
+        assert_eq!(throttle.wait_time(later), None);
+    }
+
+    #[test]
+    fn erlaubte_hosts() {
+        let allowed = vec!["sebo.example.com".to_string(), "192.168.1.5".to_string()];
+        assert!(host_allowed("sebo.example.com", &allowed));
+        assert!(host_allowed("SEBO.example.com:443", &allowed));
+        assert!(host_allowed("192.168.1.5:8080", &allowed));
+        assert!(!host_allowed("boese.example", &allowed));
+        assert!(!host_allowed("sebo.example.com.boese.example", &allowed));
+        assert_eq!(strip_port("[::1]:8080"), "[::1]");
+        assert_eq!(strip_port("[::1]"), "[::1]");
+        assert_eq!(strip_port("host"), "host");
+    }
+
+    #[test]
     fn wartezeit_steigt_an() {
-        assert_eq!(delay_for(1), Duration::ZERO);
-        assert_eq!(delay_for(3), Duration::ZERO);
-        assert_eq!(delay_for(4), Duration::from_secs(2));
-        assert_eq!(delay_for(5), Duration::from_secs(4));
-        assert_eq!(delay_for(20), MAX_DELAY);
-        assert_eq!(delay_for(u32::MAX), MAX_DELAY);
+        assert_eq!(delay_for(1, MAX_DELAY), Duration::ZERO);
+        assert_eq!(delay_for(3, MAX_DELAY), Duration::ZERO);
+        assert_eq!(delay_for(4, MAX_DELAY), Duration::from_secs(2));
+        assert_eq!(delay_for(5, MAX_DELAY), Duration::from_secs(4));
+        assert_eq!(delay_for(20, MAX_DELAY), MAX_DELAY);
+        assert_eq!(delay_for(u32::MAX, MAX_DELAY), MAX_DELAY);
+        assert_eq!(delay_for(20, MAX_CODE_DELAY), MAX_CODE_DELAY);
 
         let now = Instant::now();
         let mut throttle = Throttle::default();

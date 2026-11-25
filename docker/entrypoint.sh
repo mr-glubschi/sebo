@@ -12,7 +12,7 @@ if [ "$(id -u)" = "0" ]; then
   # Nur bei abweichendem Besitzer alles umstellen (spart Zeit bei vielen Bildern).
   if [ "$(stat -c '%u:%g' "$DATA_DIR")" != "$PUID:$PGID" ]; then
     echo "Setze Besitzer von $DATA_DIR auf $PUID:$PGID"
-    chown -R "$PUID:$PGID" "$DATA_DIR"
+    chown -R -h "$PUID:$PGID" "$DATA_DIR"
   fi
   exec su-exec "$PUID:$PGID" /usr/local/bin/sebo "$@"
 fi

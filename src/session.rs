@@ -70,25 +70,33 @@ pub fn purge_expired(conn: &Connection) -> rusqlite::Result<usize> {
 }
 
 /// Ist die Sitzung zum Token in den Headern gültig?
-pub async fn is_authenticated(db: &Db, headers: &HeaderMap) -> Result<bool, tokio_rusqlite::Error> {
-    let Some(token) = token_from_headers(headers) else {
+pub async fn is_authenticated(
+    db: &Db,
+    headers: &HeaderMap,
+    https: bool,
+) -> Result<bool, tokio_rusqlite::Error> {
+    let Some(token) = token_from_headers(headers, https) else {
         return Ok(false);
     };
     let now = now_secs();
     db.call(move |conn| validate(conn, &token, now)).await
 }
 
-/// Liest das Sitzungs-Token aus dem Cookie-Header.
-pub fn token_from_headers(headers: &HeaderMap) -> Option<String> {
+/// Liest das Sitzungs-Token aus dem Cookie-Header. Bei HTTPS zählt nur das
+/// `__Host-`-Cookie, das andere Subdomains nicht setzen können. Ungültige
+/// Werte werden übersprungen, statt das gültige Cookie zu verdecken.
+pub fn token_from_headers(headers: &HeaderMap, https: bool) -> Option<String> {
+    let wanted = if https { COOKIE_SECURE } else { COOKIE_PLAIN };
     headers
         .get_all(header::COOKIE)
         .iter()
         .filter_map(|value| value.to_str().ok())
         .flat_map(|value| value.split(';'))
         .filter_map(|pair| pair.trim().split_once('='))
-        .find(|(name, _)| *name == COOKIE_SECURE || *name == COOKIE_PLAIN)
-        .map(|(_, value)| value.to_string())
-        .filter(|value| value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit()))
+        .filter(|(name, _)| *name == wanted)
+        .map(|(_, value)| value)
+        .find(|value| value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit()))
+        .map(str::to_string)
 }
 
 /// `Set-Cookie` für eine neue Sitzung. Bei HTTPS mit `__Host-`-Präfix und `Secure`.
@@ -137,9 +145,20 @@ mod tests {
             header::COOKIE,
             format!("andere=1; sebo_session={token}").parse().unwrap(),
         );
-        assert_eq!(token_from_headers(&headers), Some(token));
+        assert_eq!(token_from_headers(&headers, false), Some(token.clone()));
+        // Bei HTTPS zählt nur das __Host-Cookie.
+        assert_eq!(token_from_headers(&headers, true), None);
+
+        // Ein untergeschobenes ungültiges Cookie verdeckt das gültige nicht.
+        headers.insert(
+            header::COOKIE,
+            format!("sebo_session=kaputt; sebo_session={token}")
+                .parse()
+                .unwrap(),
+        );
+        assert_eq!(token_from_headers(&headers, false), Some(token));
 
         headers.insert(header::COOKIE, "sebo_session=kaputt".parse().unwrap());
-        assert_eq!(token_from_headers(&headers), None);
+        assert_eq!(token_from_headers(&headers, false), None);
     }
 }

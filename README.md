@@ -48,7 +48,7 @@ Ein Container ist für genau einen Benutzer gedacht. Für mehrere Benutzer legst
 3. Die Weboberfläche öffnen (`http://<unraid-ip>:8080`), mit dem Passwort anmelden und den Code aus der App eingeben.
 4. Die angezeigten **Wiederherstellungscodes** sicher aufbewahren. Mit ihnen kommst du rein, falls das Handy verloren geht.
 
-Nach der Bestätigung erscheint der QR-Code nicht mehr im Log. Falls du Unraid-Logs an einen Syslog-Server weiterleitest, landet der QR-Code dort ebenfalls. Richte 2FA in diesem Fall am besten vor dem Einschalten der Weiterleitung ein oder setze 2FA danach einmal zurück.
+Nach der Bestätigung erscheint der QR-Code nicht mehr im Log. Die alten Log-Einträge bleiben aber stehen, bis der Container neu erstellt wird (z. B. durch Bearbeiten und **Apply** in Unraid). Mach das einmal nach der Einrichtung, dann ist das Geheimnis auch aus dem Log verschwunden. Falls du Unraid-Logs an einen Syslog-Server weiterleitest, landet der QR-Code dort ebenfalls. Richte 2FA in diesem Fall am besten vor dem Einschalten der Weiterleitung ein oder setze 2FA danach einmal zurück.
 
 ### 3. 2FA zurücksetzen
 
@@ -79,6 +79,7 @@ Den ausgegebenen Wert als Variable `PASSWORD_HASH` eintragen und `PASSWORD` entf
 | `PUID` / `PGID` | nein | `99` / `100` | Benutzer und Gruppe, denen die Daten gehören |
 | `TZ` | nein | `Europe/Berlin` | Zeitzone |
 | `TRUST_PROXY` | nein | `false` | auf `true` setzen, wenn SEBO hinter einem Reverse Proxy läuft |
+| `ALLOWED_HOSTS` | nein | – | Kommagetrennte Liste der Adressen, unter denen SEBO erreichbar ist, z. B. `sebo.example.com,192.168.1.5`. Andere werden abgewiesen (Schutz vor DNS-Rebinding). Empfohlen. |
 | `ALLOW_PRIVATE_URLS` | nein | `false` | auf `true` setzen, damit SEBO auch von internen Adressen (z. B. `192.168.x.x`) Titel und Favicon abruft |
 | `LOG_LEVEL` | nein | `info` | Ausführlichkeit des Logs (`error`, `warn`, `info`, `debug`) |
 | `PORT` | nein | `8080` | Port im Container |
@@ -92,6 +93,7 @@ Bookmarks auf Dienste im Heimnetz (Home Assistant, Unraid-Oberfläche usw.) lass
 Die App sollte nicht direkt ins Internet gestellt werden. Für den Zugriff von unterwegs empfiehlt sich ein Reverse Proxy mit HTTPS (z. B. Nginx Proxy Manager, SWAG) oder ein VPN (z. B. WireGuard, Tailscale). Für die Installation als Web-App am Handy ist HTTPS erforderlich.
 
 - Hinter einem Reverse Proxy `TRUST_PROXY=true` setzen.
+- `ALLOWED_HOSTS` auf deine Domain (und ggf. die LAN-Adresse) setzen.
 - SEBO braucht eine eigene (Sub-)Domain, z. B. `sebo.example.com`. Ein Unterpfad wie `example.com/sebo` wird nicht unterstützt.
 
 ## Updates

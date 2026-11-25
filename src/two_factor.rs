@@ -103,14 +103,16 @@ pub enum CodeCheck {
 /// Prüft einen eingegebenen Code. Während der Einrichtung schließt ein
 /// gültiger TOTP-Code die Einrichtung ab. Danach werden TOTP-Codes
 /// (jeder nur einmal) und Wiederherstellungscodes angenommen.
-pub fn check_code(conn: &mut Connection, input: &str, now: u64) -> Result<CodeCheck, String> {
+///
+/// Muss innerhalb einer Transaktion aufgerufen werden, die der Aufrufer
+/// nur bei Erfolg bestätigt (zusammen mit dem Anlegen der Sitzung).
+pub fn check_code(tx: &Connection, input: &str, now: u64) -> Result<CodeCheck, String> {
     let db_error = |error: rusqlite::Error| format!("Datenbankfehler: {error}");
-    let tx = conn.transaction().map_err(db_error)?;
 
-    let Some(secret) = get_setting(&tx, KEY_SECRET).map_err(db_error)? else {
+    let Some(secret) = get_setting(tx, KEY_SECRET).map_err(db_error)? else {
         return Ok(CodeCheck::Invalid);
     };
-    let confirmed = is_confirmed(&tx).map_err(db_error)?;
+    let confirmed = is_confirmed(tx).map_err(db_error)?;
     let code: String = input.chars().filter(|c| !c.is_whitespace()).collect();
 
     if code.len() == 6 && code.bytes().all(|b| b.is_ascii_digit()) {
@@ -118,23 +120,22 @@ pub fn check_code(conn: &mut Connection, input: &str, now: u64) -> Result<CodeCh
         let Some(step) = totp.check(&code, now) else {
             return Ok(CodeCheck::Invalid);
         };
-        let last_step: Option<u64> = get_setting(&tx, KEY_LAST_STEP)
+        let last_step: Option<u64> = get_setting(tx, KEY_LAST_STEP)
             .map_err(db_error)?
             .and_then(|value| value.parse().ok());
         if last_step.is_some_and(|last| step <= last) {
             // Code wurde schon einmal verwendet (oder ein älterer).
             return Ok(CodeCheck::Invalid);
         }
-        set_setting(&tx, KEY_LAST_STEP, &step.to_string()).map_err(db_error)?;
+        set_setting(tx, KEY_LAST_STEP, &step.to_string()).map_err(db_error)?;
 
         let result = if confirmed {
             CodeCheck::Valid
         } else {
-            set_setting(&tx, KEY_CONFIRMED, "1").map_err(db_error)?;
-            let recovery_codes = replace_recovery_codes(&tx).map_err(db_error)?;
+            set_setting(tx, KEY_CONFIRMED, "1").map_err(db_error)?;
+            let recovery_codes = replace_recovery_codes(tx).map_err(db_error)?;
             CodeCheck::SetupCompleted { recovery_codes }
         };
-        tx.commit().map_err(db_error)?;
         return Ok(result);
     }
 
@@ -145,11 +146,22 @@ pub fn check_code(conn: &mut Connection, input: &str, now: u64) -> Result<CodeCh
     let Some(normalized) = normalize_recovery_code(&code) else {
         return Ok(CodeCheck::Invalid);
     };
-    if consume_recovery_code(&tx, &normalized).map_err(db_error)? {
-        tx.commit().map_err(db_error)?;
+    if consume_recovery_code(tx, &normalized).map_err(db_error)? {
         Ok(CodeCheck::Valid)
     } else {
         Ok(CodeCheck::Invalid)
+    }
+}
+
+/// Ungefähr gleich teure Arbeit wie `check_code`, ohne etwas zu ändern.
+/// Wird bei falschem Passwort ausgeführt, damit die Antwortzeit nicht
+/// verrät, ob das Passwort stimmte.
+pub fn dummy_check(conn: &Connection, input: &str, now: u64) {
+    let secret = get_setting(conn, KEY_SECRET).ok().flatten();
+    let _ = is_confirmed(conn);
+    let _ = get_setting(conn, KEY_LAST_STEP);
+    if let Some(totp) = secret.and_then(|secret| build_totp(&secret).ok()) {
+        let _ = totp.check(input.trim(), now);
     }
 }
 
@@ -244,6 +256,14 @@ mod tests {
     use super::*;
     use crate::db::open_test;
 
+    /// Prüfung in eigener Transaktion, wie im Login.
+    fn check(conn: &mut Connection, code: &str, time: u64) -> Result<CodeCheck, String> {
+        let tx = conn.transaction().unwrap();
+        let result = check_code(&tx, code, time);
+        tx.commit().unwrap();
+        result
+    }
+
     #[test]
     fn einrichtung_replay_und_wiederherstellung() {
         let mut conn = open_test();
@@ -263,18 +283,18 @@ mod tests {
             "000000"
         };
         assert!(matches!(
-            check_code(&mut conn, wrong, t).unwrap(),
+            check(&mut conn, wrong, t).unwrap(),
             CodeCheck::Invalid
         ));
         assert!(!is_confirmed(&conn).unwrap());
         // Wiederherstellungscodes gibt es vor der Einrichtung nicht.
         assert!(matches!(
-            check_code(&mut conn, "AAAA-AAAA-AAAA", t).unwrap(),
+            check(&mut conn, "AAAA-AAAA-AAAA", t).unwrap(),
             CodeCheck::Invalid
         ));
 
         let code = current_code(&conn, t);
-        let CodeCheck::SetupCompleted { recovery_codes } = check_code(&mut conn, &code, t).unwrap()
+        let CodeCheck::SetupCompleted { recovery_codes } = check(&mut conn, &code, t).unwrap()
         else {
             panic!("Einrichtung sollte abgeschlossen werden");
         };
@@ -283,28 +303,28 @@ mod tests {
 
         // Derselbe Code darf nicht zweimal funktionieren.
         assert!(matches!(
-            check_code(&mut conn, &code, t).unwrap(),
+            check(&mut conn, &code, t).unwrap(),
             CodeCheck::Invalid
         ));
         // Der nächste Code schon.
         let next = current_code(&conn, t + 30);
         assert!(matches!(
-            check_code(&mut conn, &next, t + 30).unwrap(),
+            check(&mut conn, &next, t + 30).unwrap(),
             CodeCheck::Valid
         ));
 
         // Wiederherstellungscode: klein geschrieben und ohne Striche erlaubt, aber nur einmal.
         let recovery = recovery_codes[0].replace('-', "").to_lowercase();
         assert!(matches!(
-            check_code(&mut conn, &recovery, t).unwrap(),
+            check(&mut conn, &recovery, t).unwrap(),
             CodeCheck::Valid
         ));
         assert!(matches!(
-            check_code(&mut conn, &recovery, t).unwrap(),
+            check(&mut conn, &recovery, t).unwrap(),
             CodeCheck::Invalid
         ));
         assert!(matches!(
-            check_code(&mut conn, &recovery_codes[1], t).unwrap(),
+            check(&mut conn, &recovery_codes[1], t).unwrap(),
             CodeCheck::Valid
         ));
     }
@@ -315,7 +335,7 @@ mod tests {
         let first = pending_setup_url(&conn).unwrap().unwrap();
         let t = 2_000_000_000;
         let code = current_code(&conn, t);
-        check_code(&mut conn, &code, t).unwrap();
+        check(&mut conn, &code, t).unwrap();
         conn.execute("INSERT INTO sessions VALUES ('x', 0, 0)", [])
             .unwrap();
 

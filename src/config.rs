@@ -9,6 +9,8 @@ pub struct Config {
     pub log_level: String,
     /// `X-Forwarded-*` von einem Reverse Proxy auswerten.
     pub trust_proxy: bool,
+    /// Erlaubte Hostnamen (klein geschrieben). Leer = jeder Host.
+    pub allowed_hosts: Vec<String>,
 }
 
 impl Config {
@@ -42,11 +44,22 @@ impl Config {
 
         let trust_proxy = bool_env("TRUST_PROXY")?;
 
+        let allowed_hosts = env("ALLOWED_HOSTS")
+            .map(|value| {
+                value
+                    .split(',')
+                    .map(|host| host.trim().to_ascii_lowercase())
+                    .filter(|host| !host.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+
         Ok(Self {
             port,
             data_dir,
             log_level,
             trust_proxy,
+            allowed_hosts,
         })
     }
 
@@ -57,6 +70,7 @@ impl Config {
             data_dir: PathBuf::from("."),
             log_level: "info".into(),
             trust_proxy: false,
+            allowed_hosts: Vec::new(),
         }
     }
 }

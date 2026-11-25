@@ -50,6 +50,10 @@ pub fn router(state: AppState) -> Router {
             state.clone(),
             security::csrf,
         ))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            security::allowed_host,
+        ))
         .layer(middleware::from_fn(security::headers))
         .with_state(state)
 }

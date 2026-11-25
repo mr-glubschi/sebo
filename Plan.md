@@ -113,6 +113,7 @@ Bilder: `/data/images/<id>-og.jpg`, `/data/images/<id>-icon.png`. Sicherungen: `
 | `PUID` / `PGID` | nein | `99` / `100` | Benutzer und Gruppe für `/data` |
 | `TZ` | nein | `Europe/Berlin` | Zeitzone |
 | `TRUST_PROXY` | nein | `false` | `X-Forwarded-*` auswerten (Secure-Cookie, Log-IP) |
+| `ALLOWED_HOSTS` | nein | – | erlaubte Hostnamen (DNS-Rebinding-Schutz), leer = alle |
 | `ALLOW_PRIVATE_URLS` | nein | `false` | Metadaten auch von internen Adressen abrufen |
 | `LOG_LEVEL` | nein | `info` | Ausführlichkeit des Logs |
 | `PORT` | nein | `8080` | Port im Container |
@@ -165,3 +166,4 @@ Bilder: `/data/images/<id>-og.jpg`, `/data/images/<id>-icon.png`. Sicherungen: `
 - Phase 1: Die Passwort-Umgebungsvariable wird nach dem Start nicht aus dem Prozess entfernt. Das bringt keinen echten Schutz (sie bleibt in `docker inspect` und `/proc/1/environ` sichtbar) und bräuchte `unsafe`-Code. Wer den Klartext vermeiden will, nutzt `PASSWORD_HASH`.
 - Phase 1: `reset-2fa` zeigt den neuen QR-Code direkt in der Konsole des Befehls statt im Container-Log. Das ist sicherer (nichts im Log) und bequemer.
 - Phase 1: Wiederherstellungscodes nutzen Crockford-Base32 (12 Zeichen, 60 Bit), verwechselbare Zeichen (O/0, I/L/1) werden bei der Eingabe korrigiert.
+- Phase 1 (nach Security-Review): zusätzliche Zählung „Passwort richtig, Code falsch“ über 24 h (bis 1 h Wartezeit, wird durch Erfolg nicht zurückgesetzt), Scheinprüfung bei falschem Passwort gegen Timing-Orakel, Codeprüfung und Sitzung in einer Transaktion, bei HTTPS nur `__Host-`-Cookie, IP aus letztem `X-Forwarded-For`-Eintrag, neue Variable `ALLOWED_HOSTS`, `chown -h`.

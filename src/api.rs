@@ -88,7 +88,9 @@ impl FromRequestParts<AppState> for ClientIp {
             .then(|| parts.headers.get("x-forwarded-for"))
             .flatten()
             .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.split(',').next())
+            // Der letzte Eintrag stammt vom eigenen Proxy, die vorderen
+            // kann der Client selbst setzen.
+            .and_then(|v| v.rsplit(',').next())
             .map(|v| v.trim().to_string());
         let direct = parts
             .extensions
@@ -110,7 +112,8 @@ async fn status(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<StatusResponse>, ApiError> {
-    let authenticated = session::is_authenticated(&state.db, &headers).await?;
+    let https = is_https(&headers, state.config.trust_proxy);
+    let authenticated = session::is_authenticated(&state.db, &headers, https).await?;
     let setup_required = state
         .db
         .call(|conn| two_factor::is_confirmed(conn).map(|confirmed| !confirmed))
@@ -165,35 +168,56 @@ async fn login(
 
     // Den Code nur prüfen, wenn das Passwort stimmt, damit ein Angreifer
     // keine TOTP-Schritte oder Wiederherstellungscodes verbrauchen kann.
-    let outcome = if password_ok {
-        let code = request.code;
-        state
-            .db
-            .call(move |conn| two_factor::check_code(conn, &code, two_factor::now()))
-            .await?
-    } else {
-        CodeCheck::Invalid
-    };
+    // Bei falschem Passwort läuft eine gleich teure Scheinprüfung, damit
+    // die Antwortzeit nichts über das Passwort verrät.
+    // Codeprüfung und Anlegen der Sitzung laufen in einer Transaktion, damit
+    // ein gleichzeitiges `reset-2fa` keine Sitzung übrig lässt.
+    let code = request.code;
+    let outcome = state
+        .db
+        .call(move |conn| {
+            let now = two_factor::now();
+            if !password_ok {
+                two_factor::dummy_check(conn, &code, now);
+                return Ok::<_, String>((CodeCheck::Invalid, None));
+            }
+            let tx = conn
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+                .map_err(|error| error.to_string())?;
+            let outcome = two_factor::check_code(&tx, &code, now)?;
+            if matches!(outcome, CodeCheck::Invalid) {
+                return Ok((outcome, None));
+            }
+            let token = session::create(&tx).map_err(|error| error.to_string())?;
+            tx.commit().map_err(|error| error.to_string())?;
+            Ok((outcome, Some(token)))
+        })
+        .await?;
 
-    let recovery_codes = match outcome {
-        CodeCheck::Invalid => {
-            throttle.record_failure(Instant::now());
-            tracing::warn!("Fehlgeschlagener Login von {ip}");
+    let (recovery_codes, token) = match outcome {
+        (CodeCheck::Valid, Some(token)) => (None, token),
+        (CodeCheck::SetupCompleted { recovery_codes }, Some(token)) => {
+            tracing::info!(
+                "Zwei-Faktor-Einrichtung abgeschlossen. Hinweis: Der QR-Code steht noch in \n                 älteren Log-Einträgen. Container neu erstellen, um das Log zu leeren."
+            );
+            (Some(recovery_codes), token)
+        }
+        _ => {
+            if password_ok {
+                throttle.record_code_failure(Instant::now());
+                tracing::warn!("Fehlgeschlagener Login von {ip}: Passwort richtig, Code falsch");
+            } else {
+                throttle.record_failure(Instant::now());
+                tracing::warn!("Fehlgeschlagener Login von {ip}");
+            }
             return Err(ApiError::new(
                 StatusCode::UNAUTHORIZED,
                 "Passwort oder Code falsch",
             ));
         }
-        CodeCheck::Valid => None,
-        CodeCheck::SetupCompleted { recovery_codes } => {
-            tracing::info!("Zwei-Faktor-Einrichtung abgeschlossen");
-            Some(recovery_codes)
-        }
     };
     throttle.record_success();
     drop(throttle);
-
-    let token = state.db.call(|conn| session::create(conn)).await?;
     tracing::info!("Erfolgreicher Login von {ip}");
 
     let https = is_https(&headers, state.config.trust_proxy);
@@ -205,14 +229,15 @@ async fn login(
 }
 
 async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Result<Response, ApiError> {
-    if let Some(token) = session::token_from_headers(&headers) {
+    let https = is_https(&headers, state.config.trust_proxy);
+    if let Some(token) = session::token_from_headers(&headers, https) {
         state
             .db
             .call(move |conn| session::delete(conn, &token))
             .await?;
     }
     let mut response = StatusCode::NO_CONTENT.into_response();
-    for cookie in session::clear_cookies(is_https(&headers, state.config.trust_proxy)) {
+    for cookie in session::clear_cookies(https) {
         if let Ok(value) = HeaderValue::from_str(&cookie) {
             response.headers_mut().append(header::SET_COOKIE, value);
         }
