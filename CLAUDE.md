@@ -42,6 +42,7 @@ Selbst gehostete Bookmark-Verwaltung im Stil von Raindrop, bewusst auf das Minim
 ## Dokumentation
 
 - `README.md`: Funktionsbeschreibung und Installation auf Unraid, für das GitHub-Repo. Bei neuen Funktionen oder Umgebungsvariablen aktualisieren.
+- Lizenz: AGPL-3.0-only. Die Oberfläche muss einen sichtbaren Link zum Quellcode (GitHub-Repo) enthalten (AGPL §13).
 - `Plan.md`: nur während der Erstumsetzung, wird danach gelöscht. Nichts Dauerhaftes dort ablegen.
 
 ## Entwicklung

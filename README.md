@@ -109,3 +109,7 @@ Alle Daten liegen im Ordner `/mnt/user/appdata/sebo`:
 - `backups/`: tägliche Sicherungen der Datenbank (die letzten 7)
 
 Die Dateien in `backups/` sind immer in sich stimmig und lassen sich auch im laufenden Betrieb sicher kopieren. Zusätzlich lässt sich jederzeit ein HTML-Export über die Weboberfläche erstellen.
+
+## Lizenz
+
+SEBO steht unter der [GNU Affero General Public License v3.0](LICENSE). Du darfst SEBO frei nutzen, verändern und weitergeben. Wer eine veränderte Version weitergibt oder als Webdienst für andere betreibt, muss den geänderten Quellcode unter derselben Lizenz zugänglich machen.

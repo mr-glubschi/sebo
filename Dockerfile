@@ -51,7 +51,7 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
 
 LABEL org.opencontainers.image.title="SEBO" \
       org.opencontainers.image.description="Self-hosted Bookmarks" \
-      org.opencontainers.image.source="https://github.com/mr-glubschi/sebo"
+      org.opencontainers.image.source="https://github.com/mr-glubschi/sebo" \n      org.opencontainers.image.licenses="AGPL-3.0-only"
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["serve"]
