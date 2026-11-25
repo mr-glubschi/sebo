@@ -1,0 +1,12 @@
+node_modules/
+dist/
+build/
+.svelte-kit/
+/data/
+*.db
+*.db-journal
+.env
+.env.*
+.DS_Store
+Thumbs.db
+.claude/settings.local.json
