@@ -136,9 +136,16 @@
     document.title = heading ? `${heading} – SEBO` : "SEBO";
   });
 
-  async function reload() {
+  /** ETag des angezeigten Stands; nur beim Nachfragen mitgeschickt. */
+  let etag: string | undefined;
+
+  async function reload(onlyIfChanged = false) {
     try {
-      library = await api.library();
+      const result = await api.library(onlyIfChanged ? etag : undefined);
+      if (result) {
+        library = result.library;
+        etag = result.etag;
+      }
       loadError = "";
     } catch (e) {
       loadError = errorText(e);
@@ -158,7 +165,7 @@
     const delay = Math.min(1500 * 1.2 ** polls, 20_000);
     const timer = setTimeout(() => {
       polls += 1;
-      reload();
+      reload(true);
     }, delay);
     return () => clearTimeout(timer);
   });
@@ -360,7 +367,7 @@
 <svelte:document
   onvisibilitychange={() => {
     visibleTab = document.visibilityState === "visible";
-    if (visibleTab) reload();
+    if (visibleTab) reload(true);
   }}
 />
 
@@ -499,7 +506,7 @@
       {#if loadError}
         <div class="notice" role="alert">
           <span>{loadError}</span>
-          <button type="button" class="secondary" onclick={reload}>Erneut versuchen</button>
+          <button type="button" class="secondary" onclick={() => reload()}>Erneut versuchen</button>
         </div>
       {/if}
 

@@ -5,7 +5,7 @@ use axum::{
     body::{Body, Bytes},
     extract::DefaultBodyLimit,
     extract::{Path, Query, State},
-    http::{HeaderValue, StatusCode, header},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{delete, get, patch, post},
 };
@@ -14,7 +14,7 @@ use tower_http::compression::CompressionLayer;
 
 use crate::{
     api::ApiError,
-    db,
+    crypto, db,
     library::{self, BookmarkUpdate, DeleteContents, LibraryError},
     netscape,
     session::Authenticated,
@@ -78,11 +78,36 @@ where
     Option::<T>::deserialize(deserializer).map(Some)
 }
 
+/// Die ganze Bibliothek. Mit ETag: Schickt die Oberfläche beim Nachfragen
+/// den letzten Stand mit (`If-None-Match`), kommt bei unveränderten Daten
+/// nur 304 zurück. Die Antwort wird trotzdem nicht im Browser gespeichert.
 async fn load(
     _: Authenticated,
     State(state): State<AppState>,
-) -> Result<Json<library::Library>, ApiError> {
-    Ok(Json(with_db(&state, |conn| library::load(conn)).await?))
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let library = with_db(&state, |conn| library::load(conn)).await?;
+    let body = serde_json::to_vec(&library).map_err(ApiError::internal)?;
+    let etag = format!("\"{}\"", &crypto::sha256_hex(&body)[..32]);
+    let unchanged = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value == etag);
+    let mut response = if unchanged {
+        StatusCode::NOT_MODIFIED.into_response()
+    } else {
+        let mut response = Response::new(Body::from(body));
+        response.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        );
+        response
+    };
+    response.headers_mut().insert(
+        header::ETAG,
+        HeaderValue::from_str(&etag).map_err(ApiError::internal)?,
+    );
+    Ok(response)
 }
 
 #[derive(Deserialize)]
@@ -851,5 +876,51 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(updated["title"], "10.0.0.1");
+    }
+
+    #[tokio::test]
+    async fn bibliothek_mit_etag() {
+        let state = test_state().await;
+        let cookie = login(&state).await;
+        let get = |etag: Option<String>| {
+            let mut request = request_get("/api/library", &cookie);
+            if let Some(etag) = etag {
+                request
+                    .headers_mut()
+                    .insert(header::IF_NONE_MATCH, HeaderValue::from_str(&etag).unwrap());
+            }
+            let state = state.clone();
+            async move {
+                let response = crate::web::router(state).oneshot(request).await.unwrap();
+                let status = response.status();
+                let etag = response.headers()[header::ETAG]
+                    .to_str()
+                    .unwrap()
+                    .to_string();
+                let cache = response.headers()[header::CACHE_CONTROL]
+                    .to_str()
+                    .unwrap()
+                    .to_string();
+                (status, etag, cache)
+            }
+        };
+        let (status, etag, cache) = get(None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(cache, "no-store");
+        let (status, same, _) = get(Some(etag.clone())).await;
+        assert_eq!(status, StatusCode::NOT_MODIFIED);
+        assert_eq!(same, etag);
+
+        call(
+            &state,
+            "POST",
+            "/api/folders",
+            &cookie,
+            Some(json!({ "name": "Neu" })),
+        )
+        .await;
+        let (status, changed, _) = get(Some(etag.clone())).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_ne!(changed, etag);
     }
 }

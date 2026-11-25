@@ -93,7 +93,12 @@ fn serve() -> ExitCode {
         tracing::info!("ALLOW_PRIVATE_URLS ist aktiv: auch interne Adressen werden abgerufen");
     }
 
+    // Ein Benutzer, wenig Last: wenige Threads reichen, auch auf Servern mit
+    // vielen Kernen (Standard wäre ein Thread pro Kern).
+    let threads = std::thread::available_parallelism().map_or(2, |n| n.get().clamp(2, 4));
     let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(threads)
+        .max_blocking_threads(32)
         .enable_all()
         .build()
     {

@@ -26,7 +26,12 @@ Selbst gehostete Bookmark-Verwaltung im Stil von Raindrop, bewusst auf das Minim
 - Bei HTTPS nur das `__Host-`-Cookie akzeptieren. Optionale `ALLOWED_HOSTS` gegen DNS-Rebinding.
 - Session-Cookie `SameSite=Lax` + `Origin`-Prüfung bei ändernden Anfragen (nicht `Strict`, sonst bricht das Öffnen per Link und Share Target).
 - **SSRF:** Jeder Abruf fremder URLs geht durch die zentrale Abruf-Funktion mit IP-Prüfung nach DNS-Auflösung, festgelegter IP und einzeln geprüften Weiterleitungen. Interne Adressen nur mit `ALLOW_PRIVATE_URLS=true`. Bookmarks auf interne Adressen dürfen trotzdem immer gespeichert werden.
-- Alle fremden Eingaben begrenzen (HTML 1 MB, Bild 5 MB + Pixel-Limit, SVG ohne externe Ressourcen, Importgröße).
+- Alle fremden Eingaben begrenzen (HTML 1 MB, Bild 5 MB + Pixel-Limit, SVG ohne externe Ressourcen, Import 20 MB / 50 000 Bookmarks / 10 000 Ordner).
+- Fremdes HTML (Seiten, Importdateien) vor dem Parsen mit `meta::nesting_within` prüfen: html5ever braucht bei tiefer Verschachtelung quadratische Zeit, rekursiver Code würde den Stack sprengen. Von Seiten nur den Kopf (bis `<body`) parsen.
+- Rechenintensive Arbeit nur über `worker::run_limited` (Platz bleibt belegt, bis der Thread fertig ist).
+- `/share` darf nichts automatisch auslösen (keine Vorschau, kein Speichern): Fremde Seiten können dorthin navigieren.
+- Datenordner 700, Dateien 600 (`umask 077` im Container): Die Datenbank enthält das 2FA-Geheimnis.
+- Migrationen sind nach dem ersten Release unveränderlich, Änderungen immer als neue Migration.
 - Strikte CSP, kein Inline-Skript, kein `{@html}` im Frontend. Bilder nur vom eigenen Server ausliefern, nie SVG.
 - Titel und URLs stammen von fremden Seiten: im Frontend nur als Text ausgeben, nie als HTML. Links nur mit der vom Server geprüften URL und `rel="noopener noreferrer"`.
 - Bilder werden erst unter temporärem Namen geschrieben und nur übernommen, wenn das Ergebnis gespeichert wurde (Bookmark nicht inzwischen gelöscht/geändert). Abrufe haben eine Gesamtfrist (30 s), Bildverarbeitung läuft begrenzt (2 gleichzeitig, 10 s). Nach 3 abgebrochenen Versuchen: `failed`.
@@ -50,11 +55,26 @@ Selbst gehostete Bookmark-Verwaltung im Stil von Raindrop, bewusst auf das Minim
 - Nur amd64, Image-Tags nach Semver über GitHub-Releases
 - Kein Subpath-Betrieb
 
+## Bewusste Entscheidungen
+
+- Nicht umgesetzt: `PASSWORD_FILE`, iOS-Kurzbefehle mit API-Token, arm64-Image, manuelle Sortierung, Offline-Modus, Subpath-Betrieb. Lange Listen werden schrittweise gerendert statt virtuell gescrollt.
+- Die Passwort-Variable bleibt im Prozess (Entfernen bringt nichts, `docker inspect` zeigt sie ohnehin). Wer Klartext vermeiden will, nutzt `PASSWORD_HASH`.
+- `reset-2fa` zeigt den QR-Code in der Konsole des Befehls, nicht im Log.
+- Wiederherstellungscodes: Crockford-Base32, 12 Zeichen, O/0 und I/L/1 werden bei der Eingabe korrigiert.
+- rustls mit `ring` + `webpki-roots` (aws-lc-rs bräuchte CMake/NASM im Build).
+- Status `skipped` = interne Adresse, gespeichert, aber nicht abgerufen. `title_auto` = Titel darf vom Abruf ersetzt werden; leerer Titel setzt sofort den Hostnamen.
+- Import führt gleichnamige Ordner an gleicher Stelle zusammen und überspringt doppelte URLs, damit ein zweiter Import nichts verdoppelt. Nicht-UTF-8-Dateien werden als Windows-1252 gelesen.
+
+## Leistung
+
+- Richtwerte (Release-Build, 10 000 Bookmarks): 17–21 MB RAM, Import 0,1 s, `GET /api/library` 36 ms und 133 KB gzip, Frontend ~33 MB JS-Speicher bei 5000 Bookmarks. Bei Änderungen nicht deutlich verschlechtern.
+- `GET /api/library` hat einen ETag; das Frontend schickt ihn beim Nachfragen (`If-None-Match`) und bekommt bei unveränderten Daten 304. Die Antwort bleibt `no-store`.
+- Tokio mit 2–4 Arbeits-Threads, unabhängig von der Kernzahl des Servers.
+
 ## Dokumentation
 
 - `README.md`: Funktionsbeschreibung und Installation auf Unraid, für das GitHub-Repo. Bei neuen Funktionen oder Umgebungsvariablen aktualisieren.
 - Lizenz: AGPL-3.0-only. Die Oberfläche muss einen sichtbaren Link zum Quellcode (GitHub-Repo) enthalten (AGPL §13).
-- `Plan.md`: nur während der Erstumsetzung, wird danach gelöscht. Nichts Dauerhaftes dort ablegen.
 
 ## Entwicklung
 

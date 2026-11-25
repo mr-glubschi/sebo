@@ -30,22 +30,39 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     body: body === undefined ? undefined : raw ? body : JSON.stringify(body),
   });
 
-  if (!response.ok) {
-    let message = `Fehler ${response.status}`;
-    let retryAfter: number | undefined;
-    try {
-      const data = (await response.json()) as { error?: string; retry_after?: number };
-      if (data.error) message = data.error;
-      retryAfter = data.retry_after;
-    } catch {
-      // Antwort ohne JSON
-    }
-    if (response.status === 401 && !path.startsWith("/auth/")) unauthorizedHandler?.();
-    throw new ApiError(message, response.status, retryAfter);
-  }
-
+  if (!response.ok) await fail(response, path);
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
+}
+
+async function fail(response: Response, path: string): Promise<never> {
+  let message = `Fehler ${response.status}`;
+  let retryAfter: number | undefined;
+  try {
+    const data = (await response.json()) as { error?: string; retry_after?: number };
+    if (data.error) message = data.error;
+    retryAfter = data.retry_after;
+  } catch {
+    // Antwort ohne JSON
+  }
+  if (response.status === 401 && !path.startsWith("/auth/")) unauthorizedHandler?.();
+  throw new ApiError(message, response.status, retryAfter);
+}
+
+/**
+ * Lädt die Bibliothek. Mit dem ETag des letzten Stands antwortet der Server
+ * bei unveränderten Daten nur mit 304; dann kommt `null` zurück.
+ */
+async function loadLibrary(etag?: string): Promise<{ library: Library; etag?: string } | null> {
+  const response = await fetch("/api/library", {
+    headers: etag ? { "If-None-Match": etag } : {},
+  });
+  if (response.status === 304) return null;
+  if (!response.ok) await fail(response, "/library");
+  return {
+    library: (await response.json()) as Library,
+    etag: response.headers.get("ETag") ?? undefined,
+  };
 }
 
 /** Fehlermeldung für die Anzeige. */
@@ -89,7 +106,7 @@ export const api = {
     request<LoginResult>("POST", "/auth/login", { password, code }),
   logout: () => request<void>("POST", "/auth/logout"),
 
-  library: () => request<Library>("GET", "/library"),
+  library: loadLibrary,
 
   createFolder: (name: string, parent_id: number | null) =>
     request<Folder>("POST", "/folders", { name, parent_id }),
