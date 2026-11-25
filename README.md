@@ -6,16 +6,17 @@ Eine schlanke, selbst gehostete Bookmark-Verwaltung für Unraid. Bookmarks ersch
 
 ## Funktionen
 
-- **Login mit Zwei-Faktor-Authentifizierung**: Passwort plus Code aus einer Authenticator-App (TOTP)
-- **Bookmarks per Drag & Drop speichern**: Link aus einem anderen Tab oder der Adressleiste auf die Seite ziehen
-- **Manuell hinzufügen**: über den „+“-Button URL, Name und Ordner eingeben; Titel und Bild werden automatisch vorgeschlagen
-- **Vorschaubilder**: das Vorschaubild der Webseite (`og:image`), sonst das Favicon
-- **Drei Ansichten**: Karten, Liste und Kompakt, sortiert nach Name oder Datum
-- **Ordner und Unterordner**: Bookmarks auf Ordner ziehen oder über „Verschieben nach …“ einsortieren
-- **Live-Suche**: unscharfe Suche nach Name und URL, Treffer erscheinen beim Tippen
-- **Import und Export**: im HTML-Format, das alle Browser und Raindrop beherrschen
+- **Login mit Zwei-Faktor-Authentifizierung**: Passwort plus Code aus einer Authenticator-App (TOTP), dazu Wiederherstellungscodes
+- **Bookmarks per Drag & Drop speichern**: Link aus einem anderen Tab, der Adressleiste oder der Lesezeichenleiste auf die Seite ziehen. Auf einem Ordner in der Seitenleiste abgelegt, landet er direkt dort. Mehrere Links auf einmal gehen auch.
+- **Manuell hinzufügen**: über „Hinzufügen“ Adresse, Name und Ordner eingeben. Der Titel der Seite wird vorgeschlagen, ein Hinweis erscheint, wenn die Adresse schon gespeichert ist.
+- **Vorschaubilder**: das Vorschaubild der Webseite (`og:image`), sonst das Favicon, sonst ein farbiger Anfangsbuchstabe
+- **Drei Ansichten**: Karten, Liste und Kompakt, sortiert nach Name oder Datum. Ansicht und Sortierung merkt sich der Browser.
+- **Ordner und Unterordner**: beliebig tief. Bookmarks und Ordner mit der Maus auf einen Ordner ziehen, am Handy lange drücken und ziehen, oder im Bearbeiten-Dialog den Ordner wählen.
+- **Live-Suche**: unscharfe Suche nach Name und Domain, Treffer erscheinen beim Tippen. Tippfehler und Umlaute sind kein Problem („arzte“ findet „Ärzte“). Taste `/` springt ins Suchfeld, Enter öffnet den ersten Treffer.
+- **Import und Export**: im HTML-Format, das alle Browser und Raindrop beherrschen. Ordner bleiben erhalten, doppelte Adressen werden übersprungen.
 - **Handy-tauglich**: als Web-App installierbar; unter Android Links direkt über „Teilen“ speichern
 - **Automatische Sicherung**: tägliche Kopie der Datenbank, die letzten 7 Tage werden aufbewahrt
+- **Hell und dunkel**: folgt der Einstellung des Geräts
 
 Gespeichert werden nur Titel, URL und Vorschaubilder, keine Seiteninhalte. Die Bilder liefert SEBO selbst aus, fremde Seiten erfahren also nicht, wann du deine Bookmarks ansiehst.
 
@@ -25,21 +26,34 @@ Ein Container ist für genau einen Benutzer gedacht. Für mehrere Benutzer legst
 
 ### 1. Container anlegen
 
-1. In Unraid **Docker → Add Container** öffnen.
-2. Folgende Werte eintragen:
+**Mit Vorlage (empfohlen):**
+
+1. In der Unraid-Konsole die Vorlage herunterladen:
+
+   ```sh
+   wget -O /boot/config/plugins/dockerMan/templates-user/my-sebo.xml      https://raw.githubusercontent.com/mr-glubschi/sebo/main/unraid/sebo.xml
+   ```
+
+2. **Docker → Add Container** öffnen und bei **Template** „sebo“ auswählen.
+3. Ein **Passwort** mit mindestens 12 Zeichen eintragen und bei Bedarf Port und Datenpfad anpassen.
+4. **Apply** klicken.
+
+Die Vorlage setzt bereits die empfohlenen Sicherheitsoptionen (siehe unten).
+
+**Von Hand:** **Docker → Add Container** öffnen und folgende Werte eintragen:
 
 | Feld | Wert |
 |---|---|
 | Name | `sebo` |
-| Repository | `ghcr.io/mr-glubschi/sebo:latest` |
+| Repository | `ghcr.io/mr-glubschi/sebo:1` |
 | Network Type | `bridge` |
 | Port | Container `8080` → Host z. B. `8080` |
 | Pfad | Container `/data` → Host `/mnt/user/appdata/sebo` |
 | Variable `PASSWORD` | dein Login-Passwort, mindestens 12 Zeichen (Feld als *Masked* anlegen) |
 | Variable `TZ` | `Europe/Berlin` |
-| Extra Parameters | `--security-opt=no-new-privileges` |
+| Extra Parameters | `--security-opt=no-new-privileges --cap-drop=ALL --cap-add=CHOWN --cap-add=SETUID --cap-add=SETGID --read-only --tmpfs=/tmp` |
 
-3. **Apply** klicken.
+Die Extra Parameters härten den Container: Er darf keine zusätzlichen Rechte erlangen, hat nur die drei Fähigkeiten, die er zum Start braucht (Rechte auf `/data` setzen und auf den Benutzer `PUID`/`PGID` wechseln), und kann außerhalb von `/data` nichts schreiben. SEBO selbst läuft nie als root.
 
 ### 2. Zwei-Faktor-Authentifizierung einrichten
 
@@ -100,8 +114,8 @@ Die App sollte nicht direkt ins Internet gestellt werden. Für den Zugriff von u
 
 ## Updates
 
-- `latest` bekommt immer die neueste Version.
-- Für feste Versionen `ghcr.io/mr-glubschi/sebo:1.2.3`, `:1.2` oder `:1` verwenden.
+- `:1` (Standard in der Vorlage) bekommt alle Updates ohne inkompatible Änderungen.
+- `latest` bekommt immer die neueste Version, für feste Versionen `:1.2.3` oder `:1.2` verwenden.
 - Vor jeder Änderung an der Datenbankstruktur legt SEBO automatisch eine Sicherung an. Ein Wechsel auf eine ältere Version wird nicht unterstützt. Spiele dafür die Sicherung von vor dem Update ein.
 
 ## Backup
@@ -110,9 +124,17 @@ Alle Daten liegen im Ordner `/mnt/user/appdata/sebo`:
 
 - `app.db`: Bookmarks, Ordner und Einstellungen
 - `images/`: Vorschaubilder und Favicons
-- `backups/`: tägliche Sicherungen der Datenbank (die letzten 7)
+- `backups/`: tägliche Sicherungen der Datenbank als `sebo-JJJJMMTT.db` (die letzten 7, Datum in UTC), dazu Sicherungen vor Datenbank-Updates
 
-Die Dateien in `backups/` sind immer in sich stimmig und lassen sich auch im laufenden Betrieb sicher kopieren. Zusätzlich lässt sich jederzeit ein HTML-Export über die Weboberfläche erstellen.
+Die Dateien in `backups/` sind immer in sich stimmig und lassen sich auch im laufenden Betrieb sicher kopieren. Vorschaubilder sind nicht enthalten, SEBO lädt sie bei Bedarf neu („Titel und Bilder neu laden“). Zusätzlich lässt sich jederzeit ein HTML-Export über die Weboberfläche erstellen.
+
+**Sicherung einspielen:** Container stoppen, `app.db` durch die gewünschte Sicherung ersetzen (umbenennen in `app.db`), die Dateien `app.db-wal` und `app.db-shm` löschen, falls vorhanden, Container starten.
+
+## Am Handy
+
+- **Android (Chrome):** SEBO über HTTPS öffnen, im Menü „Zum Startbildschirm hinzufügen“ bzw. „App installieren“. Danach erscheint SEBO im „Teilen“-Menü anderer Apps: Link teilen, SEBO wählen, Ordner aussuchen, speichern.
+- **iPhone (Safari):** „Teilen“ → „Zum Home-Bildschirm“. iOS unterstützt kein Teilen an Web-Apps. Link kopieren und im „Hinzufügen“-Dialog mit dem Einfügen-Knopf übernehmen. Die installierte Web-App hat eigene Cookies, du meldest dich dort einmal neu an.
+- Zum Verschieben ein Bookmark lange drücken und auf einen Ordner im Menü ziehen.
 
 ## Lizenz
 

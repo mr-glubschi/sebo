@@ -1,0 +1,34 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>sebo</Name>
+  <Repository>ghcr.io/mr-glubschi/sebo:1</Repository>
+  <Registry>https://github.com/mr-glubschi/sebo/pkgs/container/sebo</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/mr-glubschi/sebo/issues</Support>
+  <Project>https://github.com/mr-glubschi/sebo</Project>
+  <Overview>SEBO (Self-hosted Bookmarks): schlanke Bookmark-Verwaltung im Browser. Ordner mit Unterordnern, Vorschaubilder, drei Ansichten, unscharfe Live-Suche, Links per Drag &amp; Drop hinzufügen, HTML-Import und -Export, am Handy als Web-App installierbar. Login mit Passwort und Zwei-Faktor-Code. Ein Benutzer pro Container. Beim ersten Start steht der QR-Code für die Authenticator-App im Log des Containers.</Overview>
+  <Category>Productivity: Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8080]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/mr-glubschi/sebo/main/unraid/sebo.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/mr-glubschi/sebo/main/web/public/icon-512.png</Icon>
+  <ExtraParams>--security-opt=no-new-privileges --cap-drop=ALL --cap-add=CHOWN --cap-add=SETUID --cap-add=SETGID --read-only --tmpfs=/tmp</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires>Nach dem ersten Start im Log des Containers den QR-Code mit einer Authenticator-App scannen.</Requires>
+  <Config Name="WebUI-Port" Target="8080" Default="8080" Mode="tcp" Description="Port der Weboberfläche." Type="Port" Display="always" Required="true" Mask="false">8080</Config>
+  <Config Name="Daten" Target="/data" Default="/mnt/user/appdata/sebo" Mode="rw" Description="Datenbank, Vorschaubilder und tägliche Sicherungen." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/sebo</Config>
+  <Config Name="Passwort" Target="PASSWORD" Default="" Mode="" Description="Login-Passwort, mindestens 12 Zeichen. Alternativ PASSWORD_HASH (erweiterte Ansicht) verwenden und dieses Feld leer lassen." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="Passwort-Hash" Target="PASSWORD_HASH" Default="" Mode="" Description="Optional statt des Passworts: argon2-Hash, erzeugt mit 'docker exec -it sebo hash-password'." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="Benutzer-ID für die Dateien unter /data (Unraid: 99 = nobody)." Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Gruppen-ID für die Dateien unter /data (Unraid: 100 = users)." Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
+  <Config Name="Zeitzone" Target="TZ" Default="Europe/Berlin" Mode="" Description="Zeitzone, z. B. Europe/Berlin." Type="Variable" Display="advanced" Required="false" Mask="false">Europe/Berlin</Config>
+  <Config Name="Hinter Reverse Proxy" Target="TRUST_PROXY" Default="false" Mode="" Description="true, wenn SEBO hinter einem Reverse Proxy (z. B. Nginx Proxy Manager, SWAG) mit HTTPS läuft. Dann werden X-Forwarded-Proto/-Host/-For ausgewertet." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+  <Config Name="Erlaubte Hostnamen" Target="ALLOWED_HOSTS" Default="" Mode="" Description="Optional, kommagetrennt, z. B. bookmarks.example.com,192.168.1.10. Andere Hostnamen werden abgewiesen (Schutz gegen DNS-Rebinding). Leer = alle." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Interne Adressen abrufen" Target="ALLOW_PRIVATE_URLS" Default="false" Mode="" Description="true erlaubt das Abrufen von Titel und Bildern auch von Adressen im Heimnetz (z. B. 192.168.x.x). Bookmarks auf solche Adressen lassen sich immer speichern." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+  <Config Name="Log-Level" Target="LOG_LEVEL" Default="info" Mode="" Description="error, warn, info oder debug." Type="Variable" Display="advanced" Required="false" Mask="false">info</Config>
+</Container>

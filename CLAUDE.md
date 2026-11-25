@@ -34,14 +34,19 @@ Selbst gehostete Bookmark-Verwaltung im Stil von Raindrop, bewusst auf das Minim
 ## Technik
 
 - Backend: Rust, Axum, SQLite über `tokio-rusqlite` (eine Verbindung, WAL), `rusqlite_migration`, `reqwest` + `rustls`, `scraper`, `image`, `resvg`, `totp-rs`, `tracing`
-- Frontend: Svelte 5 + Vite + TypeScript als SPA (ohne SvelteKit), uFuzzy, einfaches CSS, vite-plugin-pwa
+- Frontend: Svelte 5 + Vite + TypeScript als SPA (ohne SvelteKit), uFuzzy, einfaches CSS. PWA ohne Plugin: `web/public/manifest.webmanifest` und eigener `web/public/sw.js`, der nur `/assets/*` cacht (nie API oder Bilder). Bei Änderungen am Service Worker den Cache-Namen hochzählen.
+- Drag & Drop selbst geschrieben (`web/src/lib/drag.svelte.ts`): Pointer Events, Touch nach langem Drücken, Ablageziele per `data-drop`. Natives Ziehen innerhalb der Seite ist unterbunden.
+- Lange Listen werden schrittweise gerendert (`BookmarkView`, 150 pro Schritt). Nicht wieder alles auf einmal rendern, das kostet bei 5000 Bookmarks ein Vielfaches an Speicher.
 - API-Typen werden mit `ts-rs` aus Rust erzeugt (`cargo test` schreibt sie nach `web/src/lib/bindings/`), nicht von Hand pflegen. Die CI prüft, dass sie aktuell sind. ts-rs ist nur Dev-Abhängigkeit (`cfg_attr(test, ...)`).
 - Frontend wird mit `rust-embed` in das Programm eingebettet
 - Bildabruf läuft im Hintergrund über `meta_status` in der DB (max. 4 parallel), übersteht Neustarts. Status `skipped` = interne Adresse, nicht abgerufen.
 - Fremde URLs nur über `net::Fetcher` abrufen (SSRF-Schutz), nie direkt mit reqwest. TLS: rustls mit `ring` und `webpki-roots`.
 - Test mit echtem Internet: `cargo test -- --ignored`
-- Alle persistenten Daten liegen unter `/data` (ein Volume)
-- Container: Alpine, Entrypoint setzt Rechte für `PUID`/`PGID` (Standard 99/100) und wechselt per `su-exec`
+- Alle persistenten Daten liegen unter `/data` (ein Volume): `app.db`, `images/`, `backups/` (täglich `sebo-JJJJMMTT.db`, 7 Stände, `backup.rs`)
+- Import/Export: `netscape.rs` (Parser und Export), `library::import` (eine Transaktion, gleichnamige Ordner zusammenführen, doppelte URLs überspringen)
+- gzip nur für die Bibliotheks-API und statische Dateien, nicht für `/api/auth/*` (keine Geheimnisse neben reflektierten Daten komprimieren)
+- Container: Alpine, Entrypoint setzt Rechte für `PUID`/`PGID` (Standard 99/100) und wechselt per `su-exec`. Muss mit `--read-only --cap-drop=ALL --cap-add=CHOWN,SETUID,SETGID --security-opt=no-new-privileges` laufen (so im Unraid-Template `unraid/sebo.xml`). Die CI prüft das mit `.github/scripts/smoke-test.sh`.
+- Basis-Images im Dockerfile per Digest, Dependabot aktualisiert sie.
 - Nur amd64, Image-Tags nach Semver über GitHub-Releases
 - Kein Subpath-Betrieb
 
