@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { api } from "./lib/api";
+  import { api, onUnauthorized } from "./lib/api";
   import Footer from "./lib/Footer.svelte";
+  import Home from "./lib/Home.svelte";
   import Login from "./lib/Login.svelte";
   import RecoveryCodes from "./lib/RecoveryCodes.svelte";
 
@@ -33,10 +34,15 @@
     await refresh();
   }
 
+  // Sitzung abgelaufen: zurück zur Anmeldung.
+  onUnauthorized(() => {
+    if (view.name === "home") refresh();
+  });
+
   refresh();
 </script>
 
-<div class="page">
+<div class="page" class:home={view.name === "home"}>
   {#if view.name === "loading"}
     <p class="center">Lade …</p>
   {:else if view.name === "offline"}
@@ -49,16 +55,12 @@
   {:else if view.name === "recovery"}
     <RecoveryCodes codes={view.codes} onDone={() => (view = { name: "home" })} />
   {:else}
-    <header>
-      <strong>SEBO</strong>
-      <button type="button" class="secondary" onclick={logout}>Abmelden</button>
-    </header>
-    <main class="center">
-      <p>Angemeldet. Die Bookmarks folgen in den nächsten Phasen.</p>
-    </main>
+    <Home onlogout={logout} />
   {/if}
 
-  <Footer />
+  {#if view.name !== "home"}
+    <Footer />
+  {/if}
 </div>
 
 <style>
@@ -69,6 +71,11 @@
     padding: 0 1rem;
   }
 
+  .page.home {
+    display: block;
+    padding: 0;
+  }
+
   .page > :global(footer) {
     margin-top: auto;
   }
@@ -76,18 +83,5 @@
   .center {
     margin: 20vh auto 0;
     text-align: center;
-  }
-
-  header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.75rem 0;
-    border-bottom: 1px solid var(--border);
-  }
-
-  header strong {
-    color: var(--accent);
-    font-size: 1.2rem;
   }
 </style>

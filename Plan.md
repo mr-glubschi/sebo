@@ -147,7 +147,7 @@ Bilder: `/data/images/<id>-og.jpg`, `/data/images/<id>-icon.png`. Sicherungen: `
 - [x] **0d. Grundgerüst:** Cargo-Projekt, Vite/Svelte-Projekt, Dockerfile mit cargo-chef, Entrypoint mit PUID/PGID, Healthcheck, CI, Release-Workflow, cargo deny, Dependabot
 - [x] **1. Login:** Passwort/Hash, TOTP-Einrichtung mit QR-Code im Log, Wiederherstellungscodes, `reset-2fa`, `hash-password`, Fehlversuchs-Wartezeit, Sessions, CSRF, Header
 - [x] **2. API:** Ordner und Bookmarks, Metadaten- und Bildabruf mit SSRF-Schutz, Hintergrund-Abruf
-- [ ] **3. Oberfläche:** Login-Seite, 2FA-Einrichtung, Seitenleiste, drei Ansichten, „+“-Dialog, Bearbeiten-Dialog, Routing
+- [x] **3. Oberfläche:** Login-Seite, 2FA-Einrichtung, Seitenleiste, drei Ansichten, „+“-Dialog, Bearbeiten-Dialog, Routing
 - [ ] **4. Drag & Drop und Suche:** Links hineinziehen, auf Ordner ziehen, „Verschieben nach …“, Live-Suche
 - [ ] **5. Import und Export**
 - [ ] **6. Handy:** responsive Layout, PWA, Share Target
@@ -171,3 +171,4 @@ Bilder: `/data/images/<id>-og.jpg`, `/data/images/<id>-icon.png`. Sicherungen: `
 - Phase 2: Neuer Status `skipped` für Bookmarks auf interne Adressen (gespeichert, aber nicht abgerufen). `title_auto` merkt sich, ob der Titel vom Abruf überschrieben werden darf.
 - Phase 2: Zusätzlicher Endpunkt `POST /api/preview` liefert den Titelvorschlag für den „+“-Dialog.
 - Phase 2 (nach Security-Review): Versuchszähler `fetch_attempts` gegen Absturzschleifen, Gesamtfrist 30 s pro Bookmark, begrenzte Bildverarbeitung (2 gleichzeitig, 10 s, 64 MB, SVG max. 256 KB), höchstens 8 Favicon-Kandidaten, Bilder erst nach erfolgreichem Speichern übernehmen, bei URL-Änderung alte Bilder löschen, Bilder nur ausliefern, wenn sie laut DB existieren, `AUTOINCREMENT` für Bookmark-IDs, lokale NAT64-Präfixe gesperrt. Migration 002 wurde dafür direkt geändert (noch kein Release).
+- Phase 3: Adressen `/` (alle), `/unsortiert`, `/f/<id>`. Die Ordneransicht zeigt nur die Bookmarks direkt im Ordner, Unterordner erscheinen oben als Schaltflächen. Solange Bookmarks im Hintergrund geladen werden, fragt die Oberfläche alle 1,5 s nach (höchstens 40-mal). Getestet mit Playwright (eigenes Chromium, nur lokal, kein Projekt-Bestandteil).
