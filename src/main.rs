@@ -1,4 +1,5 @@
 mod api;
+mod backup;
 mod config;
 mod crypto;
 mod db;
@@ -121,6 +122,7 @@ fn serve() -> ExitCode {
             images_dir,
         };
         worker::spawn(state.clone());
+        backup::spawn(state.clone(), state.config.data_dir.clone());
         web::run(state).await.map_err(|error| error.to_string())
     });
 

@@ -66,5 +66,11 @@ jobs:
           context: .
           platforms: linux/amd64
           push: false
+          load: true
+          tags: sebo:test
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Rauchtest (gehärteter Container, Login, API)
+        run: sh .github/scripts/smoke-test.sh sebo:test
+      - name: Image-Größe
+        run: docker image ls sebo:test --format "{{.Size}}"

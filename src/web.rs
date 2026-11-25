@@ -8,6 +8,7 @@ use axum::{
 };
 use rust_embed::Embed;
 use tokio::net::TcpListener;
+use tower_http::compression::CompressionLayer;
 
 use crate::{api, security, state::AppState};
 
@@ -45,7 +46,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(|| async { "ok" }))
         .nest("/api", api::router())
-        .fallback(static_file)
+        .fallback_service(get(static_file).layer(CompressionLayer::new()))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             security::csrf,

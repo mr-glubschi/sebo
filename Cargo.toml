@@ -28,6 +28,7 @@ subtle = "2.6.1"
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "signal", "fs", "time", "sync"] }
 tokio-rusqlite = "0.10.0"
 totp-rs = { version = "6.0.0", default-features = false, features = ["otpauth", "gen_secret"] }
+tower-http = { version = "0.7.1", default-features = false, features = ["compression-gzip"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "env-filter", "ansi"] }
 url = "2.5.9"

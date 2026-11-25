@@ -10,6 +10,7 @@ use axum::{
     routing::{delete, get, patch, post},
 };
 use serde::{Deserialize, Deserializer, Serialize};
+use tower_http::compression::CompressionLayer;
 
 use crate::{
     api::ApiError,
@@ -40,6 +41,9 @@ pub fn router() -> Router<AppState> {
             "/import",
             post(import).layer(DefaultBodyLimit::max(MAX_IMPORT_BYTES)),
         )
+        // Bibliothek und Export können groß sein. Bilder sind schon komprimiert und
+        // werden von der Standardregel übersprungen. Login-Antworten bewusst ohne.
+        .layer(CompressionLayer::new())
 }
 
 impl From<LibraryError> for ApiError {
@@ -337,7 +341,7 @@ async fn import(
 async fn export(_: Authenticated, State(state): State<AppState>) -> Result<Response, ApiError> {
     let library = with_db(&state, |conn| library::load(conn)).await?;
     let html = netscape::export(&library.folders, &library.bookmarks);
-    let filename = format!("sebo-bookmarks-{}.html", date_string(db::now_secs()));
+    let filename = format!("sebo-bookmarks-{}.html", db::date_string(db::now_secs()));
     let mut response = Response::new(Body::from(html));
     let headers = response.headers_mut();
     headers.insert(
@@ -351,22 +355,6 @@ async fn export(_: Authenticated, State(state): State<AppState>) -> Result<Respo
             .map_err(ApiError::internal)?,
     );
     Ok(response.into_response())
-}
-
-/// Datum (UTC) als JJJJ-MM-TT, ohne Datumsbibliothek.
-fn date_string(secs: i64) -> String {
-    // Algorithmus „civil_from_days“ von Howard Hinnant
-    let days = secs.div_euclid(86_400);
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    format!("{year:04}-{month:02}-{day:02}")
 }
 
 #[cfg(test)]
@@ -807,10 +795,35 @@ mod tests {
         request("GET", path, cookie, None)
     }
 
-    #[test]
-    fn datum() {
-        assert_eq!(date_string(0), "1970-01-01");
-        assert_eq!(date_string(951_782_400), "2000-02-29");
-        assert_eq!(date_string(1_795_651_200), "2026-11-26");
+    #[tokio::test]
+    async fn kompression_nur_fuer_bibliothek() {
+        let state = test_state().await;
+        let cookie = login(&state).await;
+        for i in 0..20 {
+            call(
+                &state,
+                "POST",
+                "/api/bookmarks",
+                &cookie,
+                Some(json!({ "url": format!("https://seite{i}.example/") })),
+            )
+            .await;
+        }
+        let encoding = |path: &'static str| {
+            let mut request = request_get(path, &cookie);
+            request
+                .headers_mut()
+                .insert(header::ACCEPT_ENCODING, HeaderValue::from_static("gzip"));
+            let state = state.clone();
+            async move {
+                let response = crate::web::router(state).oneshot(request).await.unwrap();
+                response
+                    .headers()
+                    .get(header::CONTENT_ENCODING)
+                    .map(|v| v.to_str().unwrap().to_string())
+            }
+        };
+        assert_eq!(encoding("/api/library").await.as_deref(), Some("gzip"));
+        assert_eq!(encoding("/api/auth/status").await, None);
     }
 }

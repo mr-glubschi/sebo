@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
 
 # --- Frontend bauen ---------------------------------------------------------
-FROM node:24-alpine AS web
+# Basis-Images per Digest festgelegt; Dependabot hält sie aktuell.
+FROM node:24-alpine@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 AS web
 WORKDIR /web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
@@ -9,7 +10,7 @@ COPY web/ ./
 RUN npm run build
 
 # --- Rust: Abhängigkeiten vorab bauen (Cache über cargo-chef) ---------------
-FROM lukemathwalker/cargo-chef:latest-rust-alpine AS chef
+FROM lukemathwalker/cargo-chef:latest-rust-alpine@sha256:3dc65f92f830cadaa78d29ddcc8e23a22c5d6785f7758afdf50eba4e88238966 AS chef
 RUN apk add --no-cache musl-dev
 WORKDIR /app
 
@@ -28,7 +29,7 @@ COPY --from=web /web/dist ./web/dist
 RUN cargo build --release --locked
 
 # --- Laufzeit-Image ---------------------------------------------------------
-FROM alpine:3.22
+FROM alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f
 
 RUN apk add --no-cache su-exec tzdata
 
