@@ -276,14 +276,20 @@ async fn fetch_processed(
 
 /// Führt rechenintensive Arbeit in einem eigenen Thread aus, begrenzt in
 /// Anzahl und Dauer. Läuft die Arbeit zu lange, wird nicht mehr darauf
-/// gewartet; der Abruf geht ohne Ergebnis weiter.
+/// gewartet; der Abruf geht ohne Ergebnis weiter. Der Platz in `CPU` bleibt
+/// belegt, bis der Thread wirklich fertig ist (er lässt sich nicht abbrechen),
+/// damit nie mehr als zwei solche Aufgaben gleichzeitig rechnen.
 async fn run_limited<T, F>(work: F) -> Result<T, String>
 where
     T: Send + 'static,
     F: FnOnce() -> Result<T, String> + Send + 'static,
 {
-    let _permit = CPU.acquire().await.map_err(|error| error.to_string())?;
-    match timeout(CPU_DEADLINE, tokio::task::spawn_blocking(work)).await {
+    let permit = CPU.acquire().await.map_err(|error| error.to_string())?;
+    let task = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        work()
+    });
+    match timeout(CPU_DEADLINE, task).await {
         Ok(Ok(result)) => result,
         Ok(Err(error)) => Err(format!("Verarbeitung abgebrochen: {error}")),
         Err(_) => Err("Verarbeitung dauerte zu lange".into()),

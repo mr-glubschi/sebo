@@ -39,13 +39,22 @@ struct Counter {
     dropped: usize,
 }
 
+/// Höchste Rekursionstiefe beim Durchlaufen des Dokuments (zusätzlich zur
+/// Prüfung der Verschachtelung vor dem Parsen).
+const MAX_RECURSION: usize = 2 * crate::meta::MAX_NESTING;
+
 /// Liest die Datei. Der Wurzelordner (ohne Namen) steht für die oberste Ebene.
-pub fn parse(html: &str) -> (ImportFolder, usize) {
+/// Zu tief verschachtelte Dokumente werden abgelehnt (Parser und Rekursion
+/// wären sonst angreifbar).
+pub fn parse(html: &str) -> Result<(ImportFolder, usize), &'static str> {
+    if !crate::meta::nesting_within(html, crate::meta::MAX_NESTING) {
+        return Err("Die Datei ist zu tief verschachtelt.");
+    }
     let document = Html::parse_document(html);
     let mut root = ImportFolder::default();
     let mut counter = Counter::default();
-    walk(document.root_element(), &mut root, 0, &mut counter);
-    (root, counter.dropped)
+    walk(document.root_element(), &mut root, 0, 0, &mut counter);
+    Ok((root, counter.dropped))
 }
 
 /// Durchläuft die Kinder von `element`. Gibt einen gerade per `<H3>` angelegten
@@ -54,8 +63,13 @@ fn walk(
     element: ElementRef,
     current: &mut ImportFolder,
     depth: usize,
+    level: usize,
     counter: &mut Counter,
 ) -> Option<usize> {
+    if level > MAX_RECURSION {
+        counter.dropped += 1;
+        return None;
+    }
     let mut pending: Option<usize> = None;
     for child in element.children().filter_map(ElementRef::wrap) {
         match child.value().name() {
@@ -79,10 +93,10 @@ fn walk(
             "dl" => match pending.take() {
                 Some(index) => {
                     let folder = &mut current.folders[index];
-                    walk(child, folder, depth + 1, counter);
+                    walk(child, folder, depth + 1, level + 1, counter);
                 }
                 None => {
-                    walk(child, current, depth, counter);
+                    walk(child, current, depth, level + 1, counter);
                 }
             },
             "a" => {
@@ -103,7 +117,7 @@ fn walk(
             // DT, P, DD, BODY usw.: Inhalt gehört zur selben Ebene. Ein darin
             // angelegter Ordner kann seine DL als nächstes Geschwister haben.
             _ => {
-                if let Some(index) = walk(child, current, depth, counter) {
+                if let Some(index) = walk(child, current, depth, level + 1, counter) {
                     pending = Some(index);
                 }
             }
@@ -222,7 +236,7 @@ mod tests {
 
     #[test]
     fn liest_ordnerstruktur() {
-        let (root, dropped) = parse(FIREFOX);
+        let (root, dropped) = parse(FIREFOX).unwrap();
         assert_eq!(dropped, 0);
         assert_eq!(root.bookmarks.len(), 1);
         assert_eq!(root.bookmarks[0].url, "https://oben.example/");
@@ -244,7 +258,7 @@ mod tests {
         // Manche Programme schließen das DT, die DL steht dann daneben.
         let html = "<DL><DT><H3>A</H3></DT><DL><DT><A HREF='https://a.example/'>a</A></DT></DL>\
                     <DT><A HREF='https://b.example/'>b</A></DT></DL>";
-        let (root, _) = parse(html);
+        let (root, _) = parse(html).unwrap();
         assert_eq!(root.folders.len(), 1);
         assert_eq!(root.folders[0].bookmarks[0].url, "https://a.example/");
         assert_eq!(root.bookmarks[0].url, "https://b.example/");
@@ -257,7 +271,7 @@ mod tests {
             let _ = write!(html, "<DL><DT><H3>{i}</H3>");
         }
         html.push_str("<DL><DT><A HREF='https://tief.example/'>x</A></DL>");
-        let (root, _) = parse(&html);
+        let (root, _) = parse(&html).unwrap();
         let mut depth = 0;
         let mut folder = &root;
         while let Some(child) = folder.folders.first() {
@@ -266,6 +280,15 @@ mod tests {
         }
         assert_eq!(depth, MAX_DEPTH);
         assert_eq!(folder.bookmarks[0].url, "https://tief.example/");
+    }
+
+    #[test]
+    fn tiefe_dateien_werden_abgelehnt() {
+        assert!(parse(&"<div>".repeat(10_000)).is_err());
+        assert!(parse(&"<dl>".repeat(10_000)).is_err());
+        let started = std::time::Instant::now();
+        assert!(parse(&"<div>".repeat(4_000_000)).is_err());
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
     }
 
     #[test]
@@ -301,7 +324,7 @@ mod tests {
         assert!(html.contains("&lt;script&gt;"));
         assert!(html.contains("x=1&amp;y=&quot;2&quot;"));
 
-        let (root, _) = parse(&html);
+        let (root, _) = parse(&html).unwrap();
         assert_eq!(root.folders[0].name, "<Ordner> & \"Zitat\"");
         assert_eq!(
             root.folders[0].bookmarks[0].url,

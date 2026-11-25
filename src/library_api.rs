@@ -319,7 +319,8 @@ async fn import(
     let (root, dropped) =
         tokio::task::spawn_blocking(move || netscape::parse(&String::from_utf8_lossy(&body)))
             .await
-            .map_err(ApiError::internal)?;
+            .map_err(ApiError::internal)?
+            .map_err(|message| ApiError::new(StatusCode::BAD_REQUEST, message))?;
     if root.bookmarks.is_empty() && root.folders.is_empty() {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,

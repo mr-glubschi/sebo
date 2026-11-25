@@ -51,9 +51,9 @@ Die Vorlage setzt bereits die empfohlenen Sicherheitsoptionen (siehe unten).
 | Pfad | Container `/data` → Host `/mnt/user/appdata/sebo` |
 | Variable `PASSWORD` | dein Login-Passwort, mindestens 12 Zeichen (Feld als *Masked* anlegen) |
 | Variable `TZ` | `Europe/Berlin` |
-| Extra Parameters | `--security-opt=no-new-privileges --cap-drop=ALL --cap-add=CHOWN --cap-add=SETUID --cap-add=SETGID --read-only --tmpfs=/tmp` |
+| Extra Parameters | `--security-opt=no-new-privileges --cap-drop=ALL --cap-add=CHOWN --cap-add=SETUID --cap-add=SETGID --read-only --tmpfs=/tmp --memory=512m --pids-limit=256` |
 
-Die Extra Parameters härten den Container: Er darf keine zusätzlichen Rechte erlangen, hat nur die drei Fähigkeiten, die er zum Start braucht (Rechte auf `/data` setzen und auf den Benutzer `PUID`/`PGID` wechseln), und kann außerhalb von `/data` nichts schreiben. SEBO selbst läuft nie als root.
+Die Extra Parameters härten den Container: Er darf keine zusätzlichen Rechte erlangen, hat nur die drei Fähigkeiten, die er zum Start braucht (Rechte auf `/data` setzen und auf den Benutzer `PUID`/`PGID` wechseln), kann außerhalb von `/data` nichts schreiben und höchstens 512 MB Arbeitsspeicher belegen (im Alltag braucht SEBO nur einen Bruchteil davon). SEBO selbst läuft nie als root.
 
 ### 2. Zwei-Faktor-Authentifizierung einrichten
 
@@ -125,6 +125,8 @@ Alle Daten liegen im Ordner `/mnt/user/appdata/sebo`:
 - `app.db`: Bookmarks, Ordner und Einstellungen
 - `images/`: Vorschaubilder und Favicons
 - `backups/`: tägliche Sicherungen der Datenbank als `sebo-JJJJMMTT.db` (die letzten 7, Datum in UTC), dazu Sicherungen vor Datenbank-Updates
+
+Die Datenbank und die Sicherungen enthalten das 2FA-Geheimnis. SEBO macht den Ordner deshalb nur für den eigenen Benutzer (`PUID`) lesbar. Gib `appdata/sebo` nicht per SMB frei und bewahre Kopien sicher auf.
 
 Die Dateien in `backups/` sind immer in sich stimmig und lassen sich auch im laufenden Betrieb sicher kopieren. Vorschaubilder sind nicht enthalten, SEBO lädt sie bei Bedarf neu („Titel und Bilder neu laden“). Zusätzlich lässt sich jederzeit ein HTML-Export über die Weboberfläche erstellen.
 

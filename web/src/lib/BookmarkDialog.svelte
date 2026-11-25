@@ -86,7 +86,9 @@
     }
   }
 
-  if (initial.url && !initial.editing) queueMicrotask(() => preview());
+  // Bewusst keine automatische Vorschau für vorbelegte Adressen (Teilen):
+  // Eine fremde Seite könnte sonst über /share Abrufe durch den Server auslösen.
+  // Der Titel kommt nach dem Speichern aus dem Hintergrundabruf.
 
   // Titelvorschlag holen, sobald die URL fertig eingegeben ist.
   async function preview() {

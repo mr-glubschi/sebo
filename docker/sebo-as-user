@@ -4,6 +4,9 @@
 # in /data nicht root gehören.
 set -eu
 
+# Datenbank und Sicherungen enthalten das 2FA-Geheimnis: nur für den App-Benutzer lesbar.
+umask 077
+
 command="$(basename "$0")"
 
 if [ "$(id -u)" = "0" ]; then

@@ -3,6 +3,9 @@
 # die Rechte auf /data gesetzt, danach wird auf den Zielbenutzer gewechselt.
 set -eu
 
+# Datenbank und Sicherungen enthalten das 2FA-Geheimnis: nur für den App-Benutzer lesbar.
+umask 077
+
 PUID="${PUID:-99}"
 PGID="${PGID:-100}"
 DATA_DIR="${DATA_DIR:-/data}"

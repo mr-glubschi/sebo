@@ -14,7 +14,7 @@
   <WebUI>http://[IP]:[PORT:8080]/</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/mr-glubschi/sebo/main/unraid/sebo.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/mr-glubschi/sebo/main/web/public/icon-512.png</Icon>
-  <ExtraParams>--security-opt=no-new-privileges --cap-drop=ALL --cap-add=CHOWN --cap-add=SETUID --cap-add=SETGID --read-only --tmpfs=/tmp</ExtraParams>
+  <ExtraParams>--security-opt=no-new-privileges --cap-drop=ALL --cap-add=CHOWN --cap-add=SETUID --cap-add=SETGID --read-only --tmpfs=/tmp --memory=512m --pids-limit=256</ExtraParams>
   <PostArgs/>
   <CPUset/>
   <DonateText/>

@@ -14,6 +14,8 @@ use rusqlite::params;
 use crate::{db, state::AppState};
 
 const KEEP: usize = 7;
+/// Sicherungen vor Datenbank-Migrationen (`sebo-vor-migration-v<N>-<Zeit>.db`).
+const KEEP_MIGRATION: usize = 3;
 const CHECK_EVERY: Duration = Duration::from_secs(60 * 60);
 
 pub fn spawn(state: AppState, data_dir: PathBuf) {
@@ -67,20 +69,37 @@ async fn rotate(dir: &Path) {
         return;
     };
     let mut daily = Vec::new();
+    let mut migration = Vec::new();
     while let Ok(Some(entry)) = entries.next_entry().await {
         let name = entry.file_name().to_string_lossy().into_owned();
         if is_daily(&name) {
             daily.push(name);
+        } else if let Some(time) = migration_time(&name) {
+            migration.push((time, name));
         }
     }
     // Datumsformat JJJJMMTT: alphabetisch = zeitlich
     daily.sort();
-    let excess = daily.len().saturating_sub(KEEP);
-    for name in &daily[..excess] {
-        if let Err(error) = tokio::fs::remove_file(dir.join(name)).await {
-            tracing::warn!("Alte Sicherung {name} nicht löschbar: {error}");
+    migration.sort();
+    let migration: Vec<String> = migration.into_iter().map(|(_, name)| name).collect();
+    for (list, keep) in [(&daily, KEEP), (&migration, KEEP_MIGRATION)] {
+        let excess = list.len().saturating_sub(keep);
+        for name in &list[..excess] {
+            if let Err(error) = tokio::fs::remove_file(dir.join(name)).await {
+                tracing::warn!("Alte Sicherung {name} nicht löschbar: {error}");
+            }
         }
     }
+}
+
+/// Zeitpunkt einer Sicherung vor einer Migration, aus dem Dateinamen.
+fn migration_time(name: &str) -> Option<i64> {
+    name.strip_prefix("sebo-vor-migration-v")?
+        .strip_suffix(".db")?
+        .rsplit_once('-')?
+        .1
+        .parse()
+        .ok()
 }
 
 /// `sebo-JJJJMMTT.db`, nicht die Sicherungen vor Migrationen.
@@ -112,7 +131,14 @@ mod tests {
         for day in 10..20 {
             std::fs::write(dir.path().join(format!("sebo-202001{day}.db")), b"alt").unwrap();
         }
-        std::fs::write(dir.path().join("sebo-vor-migration-v1-1.db"), b"x").unwrap();
+        for (version, time) in [(1, 1), (2, 5), (3, 30), (10, 20)] {
+            std::fs::write(
+                dir.path()
+                    .join(format!("sebo-vor-migration-v{version}-{time}.db")),
+                b"x",
+            )
+            .unwrap();
+        }
 
         let created = run(&state, dir.path()).await.unwrap().unwrap();
         assert!(created.exists());
@@ -136,7 +162,11 @@ mod tests {
             .collect();
         names.sort();
         assert_eq!(names.iter().filter(|n| is_daily(n)).count(), KEEP);
-        assert!(names.contains(&"sebo-vor-migration-v1-1.db".to_string()));
+        // Von den Migrationssicherungen bleiben die drei neuesten
+        assert!(!names.contains(&"sebo-vor-migration-v1-1.db".to_string()));
+        assert!(names.contains(&"sebo-vor-migration-v2-5.db".to_string()));
+        assert!(names.contains(&"sebo-vor-migration-v10-20.db".to_string()));
+        assert!(names.contains(&"sebo-vor-migration-v3-30.db".to_string()));
         assert!(!names.contains(&"sebo-20200110.db".to_string()));
     }
 }

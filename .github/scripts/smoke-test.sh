@@ -20,6 +20,7 @@ docker run -d --name sebo -p 127.0.0.1:8080:8080 \
   --read-only --tmpfs /tmp \
   --security-opt no-new-privileges \
   --cap-drop ALL --cap-add CHOWN --cap-add SETUID --cap-add SETGID \
+  --memory 512m --pids-limit 256 \
   -e PASSWORD=rauchtest-passwort-123 \
   -v "$DATA:/data" \
   "$IMAGE"
@@ -33,7 +34,10 @@ echo "ok: läuft"
 
 # Prozess läuft als 99:100, Daten gehören 99:100
 docker top sebo -o pid,uid,gid,comm | grep -Eq ' 99 +100 +sebo$' || { docker top sebo -o pid,uid,gid,comm; fail "läuft nicht als 99:100"; }
-[ "$(stat -c '%u:%g' "$DATA/app.db")" = "99:100" ] || fail "Datenbank gehört nicht 99:100"
+[ "$(sudo stat -c '%u:%g' "$DATA/app.db")" = "99:100" ] || fail "Datenbank gehört nicht 99:100"
+# Datenbank enthält das 2FA-Geheimnis: nur für den App-Benutzer
+[ "$(sudo stat -c '%a' "$DATA")" = "700" ] || fail "Datenordner nicht 700: $(sudo stat -c %a "$DATA")"
+[ "$(sudo stat -c '%a' "$DATA/app.db")" = "600" ] || fail "Datenbank nicht 600: $(sudo stat -c %a "$DATA/app.db")"
 echo "ok: Benutzer und Rechte"
 
 # Oberfläche und Sicherheits-Header
@@ -65,7 +69,7 @@ echo "ok: CSRF"
 
 # Tägliche Sicherung
 sleep 1
-ls "$DATA/backups" | grep -Eq '^sebo-[0-9]{8}\.db$' || fail "keine Sicherung"
+sudo ls "$DATA/backups" | grep -Eq '^sebo-[0-9]{8}\.db$' || fail "keine Sicherung"
 echo "ok: Sicherung"
 
 # 2FA zurücksetzen über docker exec

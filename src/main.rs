@@ -84,6 +84,7 @@ fn serve() -> ExitCode {
             images_dir.display()
         ));
     }
+    restrict_data_dir(&config.data_dir);
     let fetcher = match net::Fetcher::new(config.allow_private_urls) {
         Ok(fetcher) => fetcher,
         Err(message) => return fail(message),
@@ -158,6 +159,25 @@ fn reset_2fa() -> ExitCode {
         }
         Err(message) => fail(message),
     }
+}
+
+/// Datenbank und Sicherungen enthalten das 2FA-Geheimnis: den Datenordner
+/// nur für den App-Benutzer zugänglich machen (gilt auch für ältere Dateien).
+fn restrict_data_dir(data_dir: &std::path::Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(error) =
+            std::fs::set_permissions(data_dir, std::fs::Permissions::from_mode(0o700))
+        {
+            tracing::warn!(
+                "Rechte von {} nicht einschränkbar: {error}",
+                data_dir.display()
+            );
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = data_dir;
 }
 
 fn init_tracing(level: &str) {
