@@ -32,7 +32,7 @@ curl -fsS "$BASE/healthz" | grep -q ok || fail "healthz antwortet nicht"
 echo "ok: läuft"
 
 # Prozess läuft als 99:100, Daten gehören 99:100
-docker top sebo -o uid,gid,comm | grep -Eq '^99 +100 +sebo' || { docker top sebo -o uid,gid,comm; fail "läuft nicht als 99:100"; }
+docker top sebo -o pid,uid,gid,comm | grep -Eq ' 99 +100 +sebo$' || { docker top sebo -o pid,uid,gid,comm; fail "läuft nicht als 99:100"; }
 [ "$(stat -c '%u:%g' "$DATA/app.db")" = "99:100" ] || fail "Datenbank gehört nicht 99:100"
 echo "ok: Benutzer und Rechte"
 
