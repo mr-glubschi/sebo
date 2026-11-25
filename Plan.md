@@ -91,8 +91,9 @@ Release-Profil: `strip = true`, `lto = "thin"`. Ziel: `x86_64-unknown-linux-musl
 folders    id, parent_id (NULL = oberste Ebene), name, created_at
 bookmarks  id, folder_id (NULL = Unsortiert), title, url, image, favicon,
            meta_status (pending|done|failed), created_at, updated_at
-settings   key, value   (totp_secret, totp_confirmed, totp_last_step, recovery_codes, ...)
-sessions   token_hash, created_at, last_seen_at, expires_at
+settings        key, value   (totp_secret, totp_confirmed, totp_last_step)
+sessions        token_hash, created_at, last_seen_at   (Ablauf: 30 Tage nach last_seen_at)
+recovery_codes  code_hash   (benutzte Codes werden gelöscht)
 ```
 
 Bilder: `/data/images/<id>-og.jpg`, `/data/images/<id>-icon.png`. Sicherungen: `/data/backups/`.
@@ -143,7 +144,7 @@ Bilder: `/data/images/<id>-og.jpg`, `/data/images/<id>-icon.png`. Sicherungen: `
 - [x] **0b. Ordner umbenennen** (`code/Neuer Ordner` → `code/sebo`)
 - [x] **0c. Architektur festlegen** (mit Review aus Sicht Security, Backend, Frontend, Betrieb)
 - [x] **0d. Grundgerüst:** Cargo-Projekt, Vite/Svelte-Projekt, Dockerfile mit cargo-chef, Entrypoint mit PUID/PGID, Healthcheck, CI, Release-Workflow, cargo deny, Dependabot
-- [ ] **1. Login:** Passwort/Hash, TOTP-Einrichtung mit QR-Code im Log, Wiederherstellungscodes, `reset-2fa`, `hash-password`, Fehlversuchs-Wartezeit, Sessions, CSRF, Header
+- [x] **1. Login:** Passwort/Hash, TOTP-Einrichtung mit QR-Code im Log, Wiederherstellungscodes, `reset-2fa`, `hash-password`, Fehlversuchs-Wartezeit, Sessions, CSRF, Header
 - [ ] **2. API:** Ordner und Bookmarks, Metadaten- und Bildabruf mit SSRF-Schutz, Hintergrund-Abruf
 - [ ] **3. Oberfläche:** Login-Seite, 2FA-Einrichtung, Seitenleiste, drei Ansichten, „+“-Dialog, Bearbeiten-Dialog, Routing
 - [ ] **4. Drag & Drop und Suche:** Links hineinziehen, auf Ordner ziehen, „Verschieben nach …“, Live-Suche
@@ -158,3 +159,9 @@ Bilder: `/data/images/<id>-og.jpg`, `/data/images/<id>-icon.png`. Sicherungen: `
 - iOS-Kurzbefehle mit API-Token (neue Funktion)
 - arm64-Image, Image-Signierung und SBOM (später bei Bedarf)
 - Manuelle Sortierung, virtuelles Scrollen, Offline-Modus, Subpath-Betrieb
+
+## Abweichungen während der Umsetzung
+
+- Phase 1: Die Passwort-Umgebungsvariable wird nach dem Start nicht aus dem Prozess entfernt. Das bringt keinen echten Schutz (sie bleibt in `docker inspect` und `/proc/1/environ` sichtbar) und bräuchte `unsafe`-Code. Wer den Klartext vermeiden will, nutzt `PASSWORD_HASH`.
+- Phase 1: `reset-2fa` zeigt den neuen QR-Code direkt in der Konsole des Befehls statt im Container-Log. Das ist sicherer (nichts im Log) und bequemer.
+- Phase 1: Wiederherstellungscodes nutzen Crockford-Base32 (12 Zeichen, 60 Bit), verwechselbare Zeichen (O/0, I/L/1) werden bei der Eingabe korrigiert.

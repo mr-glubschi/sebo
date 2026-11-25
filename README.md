@@ -58,7 +58,7 @@ Falls weder Authenticator-App noch Wiederherstellungscodes verfügbar sind, in d
 docker exec sebo reset-2fa
 ```
 
-Danach steht im Log ein neuer QR-Code, die Einrichtung beginnt von vorn. Ein Neustart ist nicht nötig.
+Der neue QR-Code erscheint direkt in der Konsole, in der du den Befehl ausführst (und bis zur Bestätigung auch beim nächsten Start im Log). Alle Sitzungen werden abgemeldet, ein Neustart ist nicht nötig.
 
 ### Passwort nicht im Klartext speichern (optional)
 
@@ -68,7 +68,7 @@ Unraid speichert Umgebungsvariablen im Klartext in der Template-Datei, und sie s
 docker exec -it sebo hash-password
 ```
 
-Den ausgegebenen Wert als Variable `PASSWORD_HASH` eintragen und `PASSWORD` entfernen.
+Den ausgegebenen Wert als Variable `PASSWORD_HASH` eintragen und `PASSWORD` entfernen. Der Hash enthält `$`-Zeichen. In der Unraid-Oberfläche ist das kein Problem, in einer `docker-compose.yml` muss jedes `$` als `$$` geschrieben werden.
 
 ## Umgebungsvariablen
 

@@ -2,13 +2,14 @@ use axum::{
     Router,
     body::Body,
     http::{HeaderValue, StatusCode, Uri, header},
+    middleware,
     response::{IntoResponse, Response},
     routing::get,
 };
 use rust_embed::Embed;
 use tokio::net::TcpListener;
 
-use crate::config::Config;
+use crate::{api, security, state::AppState};
 
 /// Das gebaute Svelte-Frontend, eingebettet ins Programm.
 /// Beim Entwickeln (Debug-Build) wird direkt von der Platte gelesen.
@@ -17,8 +18,9 @@ use crate::config::Config;
 #[allow_missing = true]
 struct Assets;
 
-pub async fn run(config: Config) -> std::io::Result<()> {
-    let app = router();
+pub async fn run(state: AppState) -> std::io::Result<()> {
+    let config = state.config.clone();
+    let app = router(state);
 
     let listener = TcpListener::bind(("0.0.0.0", config.port)).await?;
     tracing::info!(
@@ -28,18 +30,28 @@ pub async fn run(config: Config) -> std::io::Result<()> {
         config.data_dir.display()
     );
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
 
     tracing::info!("SEBO beendet");
     Ok(())
 }
 
-fn router() -> Router {
+pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(|| async { "ok" }))
+        .nest("/api", api::router())
         .fallback(static_file)
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            security::csrf,
+        ))
+        .layer(middleware::from_fn(security::headers))
+        .with_state(state)
 }
 
 /// Liefert Dateien des Frontends aus. Unbekannte Pfade ohne Dateiendung

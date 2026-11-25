@@ -1,11 +1,14 @@
 use std::path::PathBuf;
 
-/// Einstellungen aus den Umgebungsvariablen.
+/// Einstellungen aus den Umgebungsvariablen (ohne Passwort, das liest
+/// `password::PasswordCheck` separat, damit es nie in Debug-Ausgaben landet).
 #[derive(Debug, Clone)]
 pub struct Config {
     pub port: u16,
     pub data_dir: PathBuf,
     pub log_level: String,
+    /// `X-Forwarded-*` von einem Reverse Proxy auswerten.
+    pub trust_proxy: bool,
 }
 
 impl Config {
@@ -37,17 +40,41 @@ impl Config {
             ));
         }
 
+        let trust_proxy = bool_env("TRUST_PROXY")?;
+
         Ok(Self {
             port,
             data_dir,
             log_level,
+            trust_proxy,
         })
+    }
+
+    #[cfg(test)]
+    pub fn for_tests() -> Self {
+        Self {
+            port: 0,
+            data_dir: PathBuf::from("."),
+            log_level: "info".into(),
+            trust_proxy: false,
+        }
     }
 }
 
 /// Liest eine Umgebungsvariable; leere Werte gelten als nicht gesetzt.
-fn env(name: &str) -> Option<String> {
+pub fn env(name: &str) -> Option<String> {
     std::env::var(name)
         .ok()
         .filter(|value| !value.trim().is_empty())
+}
+
+fn bool_env(name: &str) -> Result<bool, String> {
+    match env(name)
+        .map(|value| value.trim().to_lowercase())
+        .as_deref()
+    {
+        None | Some("false" | "0" | "no" | "nein") => Ok(false),
+        Some("true" | "1" | "yes" | "ja") => Ok(true),
+        Some(other) => Err(format!("{name} muss true oder false sein, nicht „{other}“")),
+    }
 }
