@@ -1,33 +1,54 @@
 <script lang="ts">
   import type { Bookmark } from "./bindings/Bookmark";
+  import { draggable, drag } from "./drag.svelte";
   import Icon from "./Icon.svelte";
   import { host, type ViewMode } from "./library";
+  import type { Part } from "./search";
   import Thumb from "./Thumb.svelte";
 
   interface Props {
     bookmarks: Bookmark[];
     view: ViewMode;
+    /** Hervorgehobene Titelteile (Suchtreffer). */
+    highlights?: Map<number, Part[]>;
+    /** Ordnername anzeigen (Übersicht und Suche). */
+    folderName?: (id: number | null) => string;
     onedit: (bookmark: Bookmark) => void;
   }
 
-  let { bookmarks, view, onedit }: Props = $props();
+  let { bookmarks, view, highlights, folderName, onedit }: Props = $props();
 </script>
 
 <ul class={view}>
   {#each bookmarks as bookmark (bookmark.id)}
-    <li>
+    {@const parts = highlights?.get(bookmark.id)}
+    <li
+      use:draggable={{ kind: "bookmark", id: bookmark.id, label: bookmark.title }}
+      class:dragged={drag.item?.kind === "bookmark" && drag.item.id === bookmark.id}
+    >
       <!-- URL ist vom Server geprüft (nur http/https). -->
       <a href={bookmark.url} target="_blank" rel="noopener noreferrer" title={bookmark.url}>
         <span class="visual">
           <Thumb {bookmark} kind={view === "cards" ? "image" : "icon"} />
         </span>
         <span class="text">
-          <span class="title">{bookmark.title}</span>
+          <span class="title">
+            {#if parts}
+              {#each parts as part, index (index)}
+                {#if part.match}<mark>{part.text}</mark>{:else}{part.text}{/if}
+              {/each}
+            {:else}
+              {bookmark.title}
+            {/if}
+          </span>
           <span class="host">
             {#if view === "cards" && bookmark.image && bookmark.icon}
-              <img class="favicon" src={bookmark.icon} alt="" loading="lazy" />
+              <img class="favicon" src={bookmark.icon} alt="" loading="lazy" decoding="async" />
             {/if}
-            {host(bookmark.url)}
+            <span class="domain">{host(bookmark.url)}</span>
+            {#if folderName && view === "list"}
+              <span class="folder">· {folderName(bookmark.folder_id)}</span>
+            {/if}
             {#if bookmark.meta_status === "pending"}
               <span class="pending">· lädt …</span>
             {/if}
@@ -56,6 +77,25 @@
   li {
     position: relative;
     min-width: 0;
+    /* Lange Druck-Geste fürs Ziehen statt Textauswahl und Link-Menü */
+    -webkit-touch-callout: none;
+    user-select: none;
+  }
+
+  li.dragged {
+    opacity: 0.4;
+  }
+
+  mark {
+    color: inherit;
+    background: var(--mark);
+    border-radius: 2px;
+  }
+
+  .domain,
+  .folder {
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   a {
@@ -119,6 +159,8 @@
   }
 
   .cards li {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 15rem;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);

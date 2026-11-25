@@ -10,6 +10,8 @@
   --border: #e2e2dc;
   --hover: rgb(0 0 0 / 0.05);
   --selected: rgb(47 111 94 / 0.14);
+  --mark: rgb(255 214 0 / 0.45);
+  --drop: rgb(47 111 94 / 0.3);
   --radius: 10px;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   line-height: 1.5;
@@ -28,6 +30,8 @@
     --border: #2e2e2b;
     --hover: rgb(255 255 255 / 0.06);
     --selected: rgb(108 195 168 / 0.18);
+    --mark: rgb(255 214 0 / 0.3);
+    --drop: rgb(108 195 168 / 0.35);
   }
 }
 
@@ -44,6 +48,7 @@ body {
 
 input[type="text"],
 input[type="password"],
+input[type="search"],
 select {
   width: 100%;
   padding: 0.6rem 0.75rem;
@@ -135,4 +140,18 @@ select {
 
 label select {
   width: 100%;
+}
+
+/* Während des Ziehens keine Textauswahl, Zeiger überall gleich */
+html.dragging,
+html.dragging * {
+  user-select: none;
+  cursor: grabbing !important;
+}
+
+/* Ablageziel unter dem Zeiger */
+[data-drop].drop-over {
+  background: var(--drop) !important;
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }

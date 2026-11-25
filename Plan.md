@@ -148,7 +148,7 @@ Bilder: `/data/images/<id>-og.jpg`, `/data/images/<id>-icon.png`. Sicherungen: `
 - [x] **1. Login:** Passwort/Hash, TOTP-Einrichtung mit QR-Code im Log, Wiederherstellungscodes, `reset-2fa`, `hash-password`, Fehlversuchs-Wartezeit, Sessions, CSRF, Header
 - [x] **2. API:** Ordner und Bookmarks, Metadaten- und Bildabruf mit SSRF-Schutz, Hintergrund-Abruf
 - [x] **3. Oberfläche:** Login-Seite, 2FA-Einrichtung, Seitenleiste, drei Ansichten, „+“-Dialog, Bearbeiten-Dialog, Routing
-- [ ] **4. Drag & Drop und Suche:** Links hineinziehen, auf Ordner ziehen, „Verschieben nach …“, Live-Suche
+- [x] **4. Drag & Drop und Suche:** Links hineinziehen, auf Ordner ziehen, „Verschieben nach …“, Live-Suche
 - [ ] **5. Import und Export**
 - [ ] **6. Handy:** responsive Layout, PWA, Share Target
 - [ ] **7. Betrieb:** tägliche Sicherung, Unraid-Template, Basis-Images per Digest pinnen, Container-Härtung im Template, README fertigstellen, erstes Release taggen
@@ -172,3 +172,4 @@ Bilder: `/data/images/<id>-og.jpg`, `/data/images/<id>-icon.png`. Sicherungen: `
 - Phase 2: Zusätzlicher Endpunkt `POST /api/preview` liefert den Titelvorschlag für den „+“-Dialog.
 - Phase 2 (nach Security-Review): Versuchszähler `fetch_attempts` gegen Absturzschleifen, Gesamtfrist 30 s pro Bookmark, begrenzte Bildverarbeitung (2 gleichzeitig, 10 s, 64 MB, SVG max. 256 KB), höchstens 8 Favicon-Kandidaten, Bilder erst nach erfolgreichem Speichern übernehmen, bei URL-Änderung alte Bilder löschen, Bilder nur ausliefern, wenn sie laut DB existieren, `AUTOINCREMENT` für Bookmark-IDs, lokale NAT64-Präfixe gesperrt. Migration 002 wurde dafür direkt geändert (noch kein Release).
 - Phase 3: Adressen `/` (alle), `/unsortiert`, `/f/<id>`. Die Ordneransicht zeigt nur die Bookmarks direkt im Ordner, Unterordner erscheinen oben als Schaltflächen. Solange Bookmarks im Hintergrund geladen werden, fragt die Oberfläche alle 1,5 s nach (höchstens 40-mal). Getestet mit Playwright (eigenes Chromium, nur lokal, kein Projekt-Bestandteil).
+- Phase 4: Links von außen werden beim Ablegen direkt gespeichert (aktueller Ordner oder Ordner unter dem Zeiger), mehrere Links auf einmal möglich (max. 100), doppelte Adressen werden übersprungen. „Verschieben nach …“ ist die Ordnerauswahl im Bearbeiten-Dialog; am Handy öffnet sich beim Ziehen das Menü mit den Ordnern. Die Suche durchsucht immer alle Bookmarks, Umlaute werden gleichgesetzt („arzte“ findet „Ärzte“), „/“ springt ins Suchfeld, Enter öffnet den ersten Treffer. Zusätzlich: Hinweis auf schon gespeicherte Adresse im „+“-Dialog, Einfügen-Knopf (nur bei HTTPS/localhost verfügbar), Auswertung von `/share` im Frontend.

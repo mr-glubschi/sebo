@@ -1,12 +1,19 @@
 <script lang="ts">
   import { api, errorText, type BookmarkChanges } from "./api";
   import type { Bookmark } from "./bindings/Bookmark";
+  import { normalizeUrl } from "./drag.svelte";
   import FolderSelect from "./FolderSelect.svelte";
-  import type { Tree } from "./library";
+  import Icon from "./Icon.svelte";
+  import { folderPath, type Tree } from "./library";
   import Modal from "./Modal.svelte";
 
   interface Props {
     tree: Tree;
+    /** Alle Bookmarks, um doppelte Adressen zu erkennen. */
+    bookmarks: Bookmark[];
+    /** Vorbelegung für neue Bookmarks (z. B. über „Teilen“). */
+    initialUrl?: string;
+    initialTitle?: string;
     /** Bestehendes Bookmark bearbeiten; ohne: neues anlegen. */
     bookmark?: Bookmark;
     /** Vorauswahl für neue Bookmarks. */
@@ -16,12 +23,21 @@
     onchanged: () => void;
   }
 
-  let { tree, bookmark, folderId = null, onclose, onchanged }: Props = $props();
+  let {
+    tree,
+    bookmarks,
+    initialUrl,
+    initialTitle,
+    bookmark,
+    folderId = null,
+    onclose,
+    onchanged,
+  }: Props = $props();
 
   // Startwerte einmalig aus den Props übernehmen.
   const initial = (() => ({
-    url: bookmark?.url ?? "",
-    title: bookmark?.title ?? "",
+    url: bookmark?.url ?? initialUrl ?? "",
+    title: bookmark?.title ?? initialTitle ?? "",
     folder: bookmark ? bookmark.folder_id : folderId,
     editing: bookmark !== undefined,
   }))();
@@ -29,13 +45,48 @@
   let url = $state(initial.url);
   let title = $state(initial.title);
   let folder = $state<number | null>(initial.folder);
-  let titleTouched = $state(initial.editing);
+  let titleTouched = $state(initial.editing || initial.title !== "");
   let previewing = $state(false);
   let busy = $state(false);
   let error = $state("");
   let confirmDelete = $state(false);
 
   let previewFor = "";
+
+  // Gleiche Adresse schon gespeichert? Nur ein Hinweis, speichern bleibt möglich.
+  const duplicate = $derived.by(() => {
+    const raw = url.trim();
+    if (raw === "") return undefined;
+    const normalized = normalizeUrl(/^[a-z][a-z0-9+.-]*:/i.test(raw) ? raw : `https://${raw}`);
+    if (!normalized) return undefined;
+    return bookmarks.find((b) => b.url === normalized && b.id !== bookmark?.id);
+  });
+
+  const duplicatePlace = $derived(
+    !duplicate
+      ? ""
+      : duplicate.folder_id === null
+        ? "Unsortiert"
+        : folderPath(tree, duplicate.folder_id)
+            .map((f) => f.name)
+            .join(" / "),
+  );
+
+  // Einfügen aus der Zwischenablage (nur über HTTPS oder localhost verfügbar).
+  const canPaste = typeof navigator.clipboard?.readText === "function";
+
+  async function paste() {
+    try {
+      const text = (await navigator.clipboard.readText()).trim();
+      const match = /https?:\/\/[^\s<>"']+/.exec(text);
+      url = match ? match[0] : text.slice(0, 2048);
+      preview();
+    } catch {
+      error = "Kein Zugriff auf die Zwischenablage.";
+    }
+  }
+
+  if (initial.url && !initial.editing) queueMicrotask(() => preview());
 
   // Titelvorschlag holen, sobald die URL fertig eingegeben ist.
   async function preview() {
@@ -96,21 +147,39 @@
 
 <Modal title={bookmark ? "Bookmark bearbeiten" : "Bookmark hinzufügen"} {onclose}>
   <form onsubmit={submit}>
-    <label>
-      Adresse
-      <input
-        type="text"
-        inputmode="url"
-        autocomplete="off"
-        autocapitalize="off"
-        spellcheck="false"
-        placeholder="https://…"
-        bind:value={url}
-        onblur={preview}
-        onpaste={() => setTimeout(preview, 0)}
-        required
-      />
-    </label>
+    <div class="field">
+      <label for="bookmark-url">Adresse</label>
+      <div class="with-button">
+        <input
+          id="bookmark-url"
+          type="text"
+          inputmode="url"
+          autocomplete="off"
+          autocapitalize="off"
+          spellcheck="false"
+          placeholder="https://…"
+          maxlength="2048"
+          bind:value={url}
+          onblur={preview}
+          onpaste={() => setTimeout(preview, 0)}
+          required
+        />
+        {#if canPaste && !bookmark}
+          <button
+            type="button"
+            class="secondary icon"
+            aria-label="Aus Zwischenablage einfügen"
+            title="Aus Zwischenablage einfügen"
+            onclick={paste}
+          >
+            <Icon name="paste" />
+          </button>
+        {/if}
+      </div>
+      {#if duplicate}
+        <p class="duplicate">Schon gespeichert in {duplicatePlace} als „{duplicate.title}“.</p>
+      {/if}
+    </div>
 
     <label>
       Titel
@@ -178,6 +247,28 @@
   form {
     display: grid;
     gap: 1rem;
+  }
+
+  .field {
+    display: grid;
+    gap: 0.35rem;
+    font-size: 0.9rem;
+  }
+
+  .with-button {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .with-button button {
+    flex: none;
+    border-color: var(--border);
+  }
+
+  .duplicate {
+    margin: 0;
+    color: var(--muted);
+    overflow-wrap: anywhere;
   }
 
   .actions,

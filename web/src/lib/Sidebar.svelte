@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Folder } from "./bindings/Folder";
+  import { drag } from "./drag.svelte";
   import Footer from "./Footer.svelte";
   import FolderTree from "./FolderTree.svelte";
   import Icon from "./Icon.svelte";
@@ -85,6 +86,8 @@
       <a
         href={routePath(UNSORTED)}
         class:active={route.kind === "unsorted"}
+        class:drop-over={drag.target === "none"}
+        data-drop="none"
         onclick={(event) => navigate(UNSORTED, event)}
       >
         <Icon name="inbox" />

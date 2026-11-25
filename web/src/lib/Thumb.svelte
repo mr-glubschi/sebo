@@ -34,9 +34,9 @@
 
 <div class="thumb {kind}" style:--hue={hue(host(bookmark.url))}>
   {#if shown.type === "image"}
-    <img class="cover" src={shown.src} alt="" loading="lazy" onerror={() => fail(shown.src)} />
+    <img class="cover" src={shown.src} alt="" loading="lazy" decoding="async" onerror={() => fail(shown.src)} />
   {:else if shown.type === "icon"}
-    <img class="icon" src={shown.src} alt="" loading="lazy" onerror={() => fail(shown.src)} />
+    <img class="icon" src={shown.src} alt="" loading="lazy" decoding="async" onerror={() => fail(shown.src)} />
   {:else}
     <span class="letter" aria-hidden="true">{letter}</span>
   {/if}

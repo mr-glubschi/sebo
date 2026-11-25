@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Folder } from "./bindings/Folder";
+  import { drag, draggable } from "./drag.svelte";
   import FolderTree from "./FolderTree.svelte";
   import Icon from "./Icon.svelte";
   import { routePath, type Route, type Tree } from "./library";
@@ -32,7 +33,11 @@
       <div
         class="row"
         class:active={route.kind === "folder" && route.id === folder.id}
+        class:drop-over={drag.target === String(folder.id)}
+        class:dragged={drag.item?.kind === "folder" && drag.item.id === folder.id}
+        data-drop={String(folder.id)}
         style:--depth={depth}
+        use:draggable={{ kind: "folder", id: folder.id, label: folder.name }}
       >
         {#if hasChildren}
           <button
@@ -91,6 +96,12 @@
     align-items: center;
     padding-left: calc(var(--depth) * 0.9rem);
     border-radius: calc(var(--radius) - 4px);
+    -webkit-touch-callout: none;
+    user-select: none;
+  }
+
+  .row.dragged {
+    opacity: 0.4;
   }
 
   .row:hover {

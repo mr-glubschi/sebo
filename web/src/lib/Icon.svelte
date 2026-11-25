@@ -18,6 +18,8 @@
     cards: ["M4 4h7v7H4z", "M13 4h7v7h-7z", "M4 13h7v7H4z", "M13 13h7v7h-7z"],
     list: ["M4 5h4v4H4z", "M11 7h9", "M4 15h4v4H4z", "M11 17h9"],
     compact: ["M4 6h16", "M4 10h16", "M4 14h16", "M4 18h16"],
+    search: ["M11 4a7 7 0 1 0 0 14a7 7 0 1 0 0-14z", "M20 20l-4-4"],
+    paste: ["M9 4h6v3H9z", "M9 5H6v15h12V5h-3"],
     logout: ["M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3", "M10 16l-4-4 4-4", "M6 12h10"],
   } as const;
 

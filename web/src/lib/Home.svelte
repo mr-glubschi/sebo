@@ -5,6 +5,16 @@
   import type { Library } from "./bindings/Library";
   import BookmarkDialog from "./BookmarkDialog.svelte";
   import BookmarkView from "./BookmarkView.svelte";
+  import {
+    drag,
+    droppedLinks,
+    hasLink,
+    parseTarget,
+    targetAt,
+    type DragItem,
+    type DropTarget,
+    type DroppedLink,
+  } from "./drag.svelte";
   import FolderDialog from "./FolderDialog.svelte";
   import Icon, { type IconName } from "./Icon.svelte";
   import {
@@ -17,20 +27,28 @@
     savePref,
     SORT_MODES,
     sortBookmarks,
+    subtree,
     VIEW_MODES,
     type Route,
     type SortMode,
     type ViewMode,
   } from "./library";
+  import { SearchIndex, type Part } from "./search";
+  import { readShare } from "./share";
   import Sidebar from "./Sidebar.svelte";
+  import { toasts } from "./toast.svelte";
+  import Toasts from "./Toasts.svelte";
 
   let { onlogout }: { onlogout: () => void } = $props();
 
   type Dialog =
-    | { kind: "add" }
+    | { kind: "add"; url?: string; title?: string }
     | { kind: "edit"; bookmark: Bookmark }
     | { kind: "newFolder" }
     | { kind: "editFolder"; folder: Folder };
+
+  // Über „Teilen“ (Android) geöffnet: Link in den Dialog übernehmen.
+  const shared = readShare();
 
   let library = $state<Library | null>(null);
   let loadError = $state("");
@@ -38,10 +56,17 @@
   let view = $state<ViewMode>(loadPref("view", VIEW_MODES, "cards"));
   let sort = $state<SortMode>(loadPref("sort", SORT_MODES, "new"));
   let menuOpen = $state(false);
-  let dialog = $state<Dialog | null>(null);
+  let dialog = $state<Dialog | null>(shared ? { kind: "add", ...shared } : null);
+  let query = $state("");
+  let searchInput = $state<HTMLInputElement>();
+  /** Gerade wird ein Link von außen über die Seite gezogen. */
+  let external = $state(false);
 
   const tree = $derived(buildTree(library?.folders ?? []));
   const bookmarks = $derived(library?.bookmarks ?? []);
+  const index = $derived(new SearchIndex(bookmarks));
+  const searching = $derived(query.trim() !== "");
+  const hits = $derived(searching ? index.search(query) : []);
 
   const counts = $derived.by(() => {
     const result = new Map<number, number>();
@@ -53,24 +78,48 @@
   const unsortedCount = $derived(bookmarks.filter((b) => b.folder_id === null).length);
 
   const current = $derived(route.kind === "folder" ? tree.byId.get(route.id) : undefined);
-  const breadcrumbs = $derived(current ? folderPath(tree, current.id).slice(0, -1) : []);
+  const breadcrumbs = $derived(
+    current && !searching ? folderPath(tree, current.id).slice(0, -1) : [],
+  );
   const heading = $derived(
-    route.kind === "all" ? "Alle Bookmarks" : route.kind === "unsorted" ? "Unsortiert" : (current?.name ?? ""),
+    searching
+      ? "Suche"
+      : route.kind === "all"
+        ? "Alle Bookmarks"
+        : route.kind === "unsorted"
+          ? "Unsortiert"
+          : (current?.name ?? ""),
   );
-  const subfolders = $derived(current ? (tree.children.get(current.id) ?? []) : []);
+  const subfolders = $derived(
+    current && !searching ? (tree.children.get(current.id) ?? []) : [],
+  );
   const visible = $derived(
-    sortBookmarks(
-      bookmarks.filter((b) =>
-        route.kind === "all"
-          ? true
-          : route.kind === "unsorted"
-            ? b.folder_id === null
-            : b.folder_id === route.id,
-      ),
-      sort,
-    ),
+    searching
+      ? hits.map((hit) => hit.bookmark)
+      : sortBookmarks(
+          bookmarks.filter((b) =>
+            route.kind === "all"
+              ? true
+              : route.kind === "unsorted"
+                ? b.folder_id === null
+                : b.folder_id === route.id,
+          ),
+          sort,
+        ),
   );
+  const highlights = $derived(
+    searching ? new Map<number, Part[]>(hits.map((hit) => [hit.bookmark.id, hit.title])) : undefined,
+  );
+  const showFolders = $derived(searching || route.kind === "all");
   const currentFolderId = $derived(route.kind === "folder" ? route.id : null);
+
+  function folderName(id: number | null): string {
+    return id === null ? "Unsortiert" : (tree.byId.get(id)?.name ?? "?");
+  }
+
+  function targetName(target: DropTarget): string {
+    return target === null ? "Unsortiert" : folderName(target);
+  }
 
   $effect(() => {
     document.title = heading ? `${heading} – SEBO` : "SEBO";
@@ -107,6 +156,7 @@
 
   function navigate(target: Route, replace = false) {
     menuOpen = false;
+    query = "";
     if (sameRoute(target, route)) return;
     route = target;
     const path = routePath(target);
@@ -125,7 +175,10 @@
 
   function folderDeleted(folder: Folder) {
     if (route.kind === "folder" && route.id === folder.id) {
-      navigate(folder.parent_id === null ? { kind: "all" } : { kind: "folder", id: folder.parent_id }, true);
+      navigate(
+        folder.parent_id === null ? { kind: "all" } : { kind: "folder", id: folder.parent_id },
+        true,
+      );
     }
   }
 
@@ -141,6 +194,137 @@
 
   function keydown(event: KeyboardEvent) {
     if (event.key === "Escape" && menuOpen) menuOpen = false;
+    // „/“ springt in die Suche
+    const typing = (event.target as Element).closest("input, textarea, select, [contenteditable]");
+    if (event.key === "/" && !typing && !dialog && !event.ctrlKey && !event.metaKey) {
+      event.preventDefault();
+      searchInput?.focus();
+    }
+  }
+
+  function searchKeydown(event: KeyboardEvent) {
+    if (event.key === "Escape") {
+      query = "";
+      searchInput?.blur();
+    } else if (event.key === "Enter" && visible[0]) {
+      // Ersten Treffer öffnen
+      window.open(visible[0].url, "_blank", "noopener,noreferrer");
+    }
+  }
+
+  // ---- Verschieben per Ziehen ----
+
+  let menuOpenedByDrag = false;
+
+  drag.onstart = () => {
+    // Am Handy liegen die Ordner im Menü: beim Ziehen aufklappen.
+    if (!menuOpen && matchMedia("(max-width: 800px)").matches) {
+      menuOpen = true;
+      menuOpenedByDrag = true;
+    }
+  };
+
+  $effect(() => {
+    if (!drag.item && menuOpenedByDrag) {
+      menuOpenedByDrag = false;
+      menuOpen = false;
+    }
+  });
+
+  drag.ondrop = (item, target) => {
+    move(item, target);
+  };
+
+  async function move(item: DragItem, target: DropTarget) {
+    try {
+      if (item.kind === "bookmark") {
+        const bookmark = bookmarks.find((b) => b.id === item.id);
+        if (!bookmark || bookmark.folder_id === target) return;
+        await api.updateBookmark(item.id, { folder_id: target });
+        toasts.show(`„${item.label}“ → ${targetName(target)}`);
+      } else {
+        const folder = tree.byId.get(item.id);
+        if (!folder || folder.parent_id === target) return;
+        if (target !== null && subtree(tree, item.id).has(target)) {
+          toasts.show("Ein Ordner kann nicht in sich selbst liegen.", true);
+          return;
+        }
+        await api.updateFolder(item.id, { parent_id: target });
+        toasts.show(`Ordner „${item.label}“ → ${target === null ? "oberste Ebene" : folderName(target)}`);
+      }
+    } catch (e) {
+      toasts.show(errorText(e), true);
+    }
+    await reload();
+  }
+
+  // ---- Links von außen hineinziehen ----
+
+  let externalTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function endExternal() {
+    external = false;
+    drag.target = null;
+  }
+
+  function dragover(event: DragEvent) {
+    if (drag.item || !hasLink(event.dataTransfer)) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+    external = true;
+    drag.target = targetAt(event.clientX, event.clientY);
+    // Kein zuverlässiges „dragleave“ für das Fenster: Zeitgeber statt dessen.
+    clearTimeout(externalTimer);
+    externalTimer = setTimeout(endExternal, 250);
+  }
+
+  function drop(event: DragEvent) {
+    if (!external || !event.dataTransfer) return;
+    event.preventDefault();
+    clearTimeout(externalTimer);
+    const target = parseTarget(drag.target);
+    endExternal();
+    const links = droppedLinks(event.dataTransfer);
+    if (links.length === 0) {
+      toasts.show("Kein Link gefunden. Nur http- und https-Adressen.", true);
+      return;
+    }
+    saveLinks(links, target === undefined ? currentFolderId : target);
+  }
+
+  async function saveLinks(links: DroppedLink[], folder: DropTarget) {
+    const existing = new Set(bookmarks.map((b) => b.url));
+    let saved = 0;
+    let duplicates = 0;
+    let failed = 0;
+    for (const link of links) {
+      if (existing.has(link.url)) {
+        duplicates += 1;
+        continue;
+      }
+      try {
+        await api.createBookmark({ url: link.url, title: link.title, folder_id: folder });
+        saved += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+    await reload();
+    const parts = [];
+    if (saved > 0) {
+      parts.push(
+        `${saved === 1 ? "Bookmark" : `${saved} Bookmarks`} gespeichert in ${targetName(folder)}`,
+      );
+    }
+    if (duplicates > 0) parts.push(`${duplicates} schon vorhanden`);
+    if (failed > 0) parts.push(`${failed} fehlgeschlagen`);
+    toasts.show(parts.join(", "), saved === 0);
+  }
+
+  // Natives Ziehen von Elementen der eigenen Seite (z. B. Ordner-Links) unterbinden,
+  // sonst würde SEBO seine eigenen Adressen als Bookmark speichern.
+  function dragstart(event: DragEvent) {
+    event.preventDefault();
   }
 
   const VIEW_LABELS: Record<ViewMode, [string, IconName]> = {
@@ -158,7 +342,16 @@
   reload();
 </script>
 
-<svelte:window onpopstate={() => (route = parseRoute(location.pathname))} onkeydown={keydown} />
+<svelte:window
+  onpopstate={() => {
+    route = parseRoute(location.pathname);
+    query = "";
+  }}
+  onkeydown={keydown}
+  ondragover={dragover}
+  ondrop={drop}
+  ondragstart={dragstart}
+/>
 
 <div class="layout" class:menu-open={menuOpen}>
   <aside id="sidebar">
@@ -208,7 +401,7 @@
         <h1>{heading}</h1>
       </div>
 
-      {#if current}
+      {#if current && !searching}
         <button
           type="button"
           class="icon"
@@ -229,6 +422,21 @@
         <span>Hinzufügen</span>
       </button>
 
+      <div class="search">
+        <Icon name="search" />
+        <input
+          type="search"
+          placeholder="Suchen …"
+          aria-label="Bookmarks durchsuchen"
+          autocomplete="off"
+          spellcheck="false"
+          enterkeyhint="go"
+          bind:value={query}
+          bind:this={searchInput}
+          onkeydown={searchKeydown}
+        />
+      </div>
+
       <div class="options">
         <div class="views" role="group" aria-label="Ansicht">
           {#each VIEW_MODES as mode (mode)}
@@ -248,6 +456,7 @@
         <select
           aria-label="Sortierung"
           value={sort}
+          disabled={searching}
           onchange={(event) => setSort(event.currentTarget.value as SortMode)}
         >
           {#each SORT_MODES as mode (mode)}
@@ -270,7 +479,12 @@
           {#each subfolders as folder (folder.id)}
             {@const target = { kind: "folder", id: folder.id } as const}
             <li>
-              <a href={routePath(target)} onclick={(event) => linkClick(target, event)}>
+              <a
+                href={routePath(target)}
+                data-drop={String(folder.id)}
+                class:drop-over={drag.target === String(folder.id)}
+                onclick={(event) => linkClick(target, event)}
+              >
                 <Icon name="folder" />
                 <span>{folder.name}</span>
               </a>
@@ -283,13 +497,22 @@
         <p class="empty">Lade …</p>
       {:else if library !== null && visible.length === 0}
         <div class="empty">
-          <p>{route.kind === "all" ? "Noch keine Bookmarks." : "Hier sind keine Bookmarks."}</p>
-          <button type="button" onclick={() => (dialog = { kind: "add" })}>Bookmark hinzufügen</button>
+          {#if searching}
+            <p>Keine Treffer für „{query.trim()}“.</p>
+          {:else}
+            <p>{route.kind === "all" ? "Noch keine Bookmarks." : "Hier sind keine Bookmarks."}</p>
+            <p class="hint">Ziehe einen Link hierher oder füge ihn hinzu.</p>
+            <button type="button" onclick={() => (dialog = { kind: "add" })}>
+              Bookmark hinzufügen
+            </button>
+          {/if}
         </div>
       {:else}
         <BookmarkView
           bookmarks={visible}
           {view}
+          {highlights}
+          folderName={showFolders ? folderName : undefined}
           onedit={(bookmark) => (dialog = { kind: "edit", bookmark })}
         />
       {/if}
@@ -297,11 +520,37 @@
   </div>
 </div>
 
+{#if drag.item}
+  <div class="ghost" style:transform="translate({drag.x + 14}px, {drag.y + 14}px)">
+    <Icon name={drag.item.kind === "folder" ? "folder" : "all"} />
+    <span>{drag.item.label}</span>
+  </div>
+{/if}
+
+{#if external}
+  {@const target = parseTarget(drag.target)}
+  <div class="drop-hint" aria-hidden="true">
+    Loslassen zum Speichern in
+    <strong>{targetName(target === undefined ? currentFolderId : target)}</strong>
+  </div>
+{/if}
+
+<Toasts />
+
 {#if dialog?.kind === "add"}
-  <BookmarkDialog {tree} folderId={currentFolderId} onclose={() => (dialog = null)} onchanged={reload} />
+  <BookmarkDialog
+    {tree}
+    {bookmarks}
+    folderId={currentFolderId}
+    initialUrl={dialog.url}
+    initialTitle={dialog.title}
+    onclose={() => (dialog = null)}
+    onchanged={reload}
+  />
 {:else if dialog?.kind === "edit"}
   <BookmarkDialog
     {tree}
+    {bookmarks}
     bookmark={dialog.bookmark}
     onclose={() => (dialog = null)}
     onchanged={reload}
@@ -401,6 +650,65 @@
     display: flex;
     align-items: center;
     gap: 0.35rem;
+  }
+
+  .search {
+    position: relative;
+    display: flex;
+    align-items: center;
+    width: min(18rem, 30vw);
+    color: var(--muted);
+  }
+
+  .search :global(svg) {
+    position: absolute;
+    left: 0.65rem;
+    pointer-events: none;
+  }
+
+  .search input {
+    padding-left: 2.25rem;
+    background: var(--surface);
+  }
+
+  .hint {
+    font-size: 0.9rem;
+  }
+
+  .ghost {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    max-width: 16rem;
+    padding: 0.4rem 0.7rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    background: var(--surface);
+    border: 1px solid var(--accent);
+    border-radius: calc(var(--radius) - 4px);
+    box-shadow: 0 6px 20px rgb(0 0 0 / 0.25);
+    pointer-events: none;
+  }
+
+  .ghost span {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .drop-hint {
+    position: fixed;
+    inset: auto 0 0;
+    z-index: 40;
+    padding: 1rem calc(1rem + env(safe-area-inset-right)) calc(1rem + env(safe-area-inset-bottom));
+    text-align: center;
+    color: var(--accent-text);
+    background: var(--accent);
+    pointer-events: none;
   }
 
   .options {
@@ -513,7 +821,17 @@
     }
 
     .toolbar {
+      position: static;
       padding: 0.5rem 1rem;
+    }
+
+    .search {
+      order: 10;
+      width: 100%;
+    }
+
+    .options {
+      order: 11;
     }
 
     .add span {
