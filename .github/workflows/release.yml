@@ -44,6 +44,9 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
+          labels: |
+            org.opencontainers.image.licenses=AGPL-3.0-only
+            org.opencontainers.image.description=Self-hosted Bookmarks
       - id: push
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
