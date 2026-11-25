@@ -2,7 +2,8 @@
 
 use axum::{
     Json, Router,
-    body::Body,
+    body::{Body, Bytes},
+    extract::DefaultBodyLimit,
     extract::{Path, Query, State},
     http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
@@ -12,7 +13,9 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{
     api::ApiError,
+    db,
     library::{self, BookmarkUpdate, DeleteContents, LibraryError},
+    netscape,
     session::Authenticated,
     state::AppState,
     worker,
@@ -32,6 +35,11 @@ pub fn router() -> Router<AppState> {
         .route("/bookmarks/{id}/image", delete(remove_image))
         .route("/preview", post(preview))
         .route("/images/{name}", get(image))
+        .route("/export", get(export))
+        .route(
+            "/import",
+            post(import).layer(DefaultBodyLimit::max(MAX_IMPORT_BYTES)),
+        )
 }
 
 impl From<LibraryError> for ApiError {
@@ -290,6 +298,75 @@ async fn image(
         HeaderValue::from_static("private, max-age=31536000, immutable"),
     );
     Ok(response.into_response())
+}
+
+/// Größte Importdatei (Browser-Exporte mit eingebetteten Favicons können groß sein).
+const MAX_IMPORT_BYTES: usize = 20 * 1024 * 1024;
+
+async fn import(
+    _: Authenticated,
+    State(state): State<AppState>,
+    body: Bytes,
+) -> Result<Json<library::ImportResult>, ApiError> {
+    if body.is_empty() {
+        return Err(ApiError::new(StatusCode::BAD_REQUEST, "Die Datei ist leer"));
+    }
+    // Parsen braucht Rechenzeit: nicht auf dem Async-Thread.
+    let (root, dropped) =
+        tokio::task::spawn_blocking(move || netscape::parse(&String::from_utf8_lossy(&body)))
+            .await
+            .map_err(ApiError::internal)?;
+    if root.bookmarks.is_empty() && root.folders.is_empty() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "Keine Bookmarks gefunden. Erwartet wird eine HTML-Exportdatei eines Browsers.",
+        ));
+    }
+    let result = with_db(&state, move |conn| library::import(conn, &root, dropped)).await?;
+    tracing::info!(
+        "Import: {} Bookmarks, {} Ordner, {} doppelt, {} ungültig",
+        result.bookmarks,
+        result.folders,
+        result.duplicates,
+        result.invalid
+    );
+    state.worker.notify_one();
+    Ok(Json(result))
+}
+
+async fn export(_: Authenticated, State(state): State<AppState>) -> Result<Response, ApiError> {
+    let library = with_db(&state, |conn| library::load(conn)).await?;
+    let html = netscape::export(&library.folders, &library.bookmarks);
+    let filename = format!("sebo-bookmarks-{}.html", date_string(db::now_secs()));
+    let mut response = Response::new(Body::from(html));
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    // Immer herunterladen, nie im Browser anzeigen.
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_str(&format!("attachment; filename=\"{filename}\""))
+            .map_err(ApiError::internal)?,
+    );
+    Ok(response.into_response())
+}
+
+/// Datum (UTC) als JJJJ-MM-TT, ohne Datumsbibliothek.
+fn date_string(secs: i64) -> String {
+    // Algorithmus „civil_from_days“ von Howard Hinnant
+    let days = secs.div_euclid(86_400);
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!("{year:04}-{month:02}-{day:02}")
 }
 
 #[cfg(test)]
@@ -629,5 +706,111 @@ mod tests {
             0,
             "keine Anfrage an die interne Adresse"
         );
+    }
+
+    #[tokio::test]
+    async fn import_und_export() {
+        let state = test_state().await;
+        let cookie = login(&state).await;
+        let (_, existing) = call(
+            &state,
+            "POST",
+            "/api/bookmarks",
+            &cookie,
+            Some(json!({ "url": "https://schon-da.example/" })),
+        )
+        .await;
+        assert!(existing["id"].is_number());
+
+        let file = r#"<!DOCTYPE NETSCAPE-Bookmark-file-1>
+<DL><p>
+  <DT><H3>Ordner</H3>
+  <DL><p>
+    <DT><A HREF="https://neu.example/a" ADD_DATE="1600000000">A &amp; B</A>
+    <DT><A HREF="https://schon-da.example/">doppelt</A>
+    <DT><A HREF="javascript:alert(1)">böse</A>
+    <DT><A HREF="https://neu.example/a">doppelt in der Datei</A>
+  </DL><p>
+  <DT><A HREF="neu.example/ohne-schema"></A>
+</DL>"#;
+        let import = |body: &'static str| {
+            Request::builder()
+                .method("POST")
+                .uri("/api/import")
+                .header(header::HOST, HOST)
+                .header(header::ORIGIN, ORIGIN)
+                .header(header::COOKIE, &cookie)
+                .header(header::CONTENT_TYPE, "text/html")
+                .body(Body::from(body))
+                .unwrap()
+        };
+        let (status, _, result) = send(&state, import(file)).await;
+        assert_eq!(status, StatusCode::OK, "{result}");
+        assert_eq!(
+            result,
+            json!({ "folders": 1, "bookmarks": 2, "duplicates": 2, "invalid": 1, "dropped": 0 })
+        );
+
+        // Zweiter Import: Ordner wird wiederverwendet, alles doppelt.
+        let (_, _, again) = send(&state, import(file)).await;
+        assert_eq!(again["folders"], 0);
+        assert_eq!(again["bookmarks"], 0);
+
+        let (_, library) = call(&state, "GET", "/api/library", &cookie, None).await;
+        assert_eq!(library["folders"].as_array().unwrap().len(), 1);
+        let a = library["bookmarks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|b| b["url"] == "https://neu.example/a")
+            .unwrap();
+        assert_eq!(a["title"], "A & B");
+        assert_eq!(a["created_at"], 1_600_000_000);
+        assert_eq!(a["meta_status"], "pending");
+
+        // Keine Bookmarks in der Datei
+        let (status, _, _) = send(&state, import("<html>hallo</html>")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        // Ohne Origin (CSRF) abgelehnt
+        let mut request = import(file);
+        request.headers_mut().remove(header::ORIGIN);
+        let (status, _, _) = send(&state, request).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+
+        // Export
+        let response = crate::web::router(state.clone())
+            .oneshot(request_get("/api/export", &cookie))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let disposition = response.headers()[header::CONTENT_DISPOSITION]
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert!(disposition.starts_with("attachment; filename=\"sebo-bookmarks-"));
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8(body.to_vec()).unwrap();
+        assert!(html.contains("<H3 ADD_DATE="));
+        assert!(html.contains(">A &amp; B</A>"));
+        assert!(html.contains("https://schon-da.example/"));
+    }
+
+    #[tokio::test]
+    async fn export_braucht_anmeldung() {
+        let state = test_state().await;
+        let (status, _) = call(&state, "GET", "/api/export", "", None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    fn request_get(path: &str, cookie: &str) -> Request<Body> {
+        request("GET", path, cookie, None)
+    }
+
+    #[test]
+    fn datum() {
+        assert_eq!(date_string(0), "1970-01-01");
+        assert_eq!(date_string(951_782_400), "2000-02-29");
+        assert_eq!(date_string(1_795_651_200), "2026-11-26");
     }
 }

@@ -134,18 +134,21 @@
     }
   }
 
-  // Solange Titel und Bilder im Hintergrund geladen werden, regelmäßig nachsehen.
+  // Solange Titel und Bilder im Hintergrund geladen werden, regelmäßig nachsehen:
+  // anfangs schnell, dann seltener (große Importe dauern), nicht im Hintergrund-Tab.
   let polls = 0;
+  let visibleTab = $state(document.visibilityState === "visible");
   $effect(() => {
+    if (!visibleTab) return;
     if (!bookmarks.some((b) => b.meta_status === "pending")) {
       polls = 0;
       return;
     }
-    if (polls >= 40) return;
+    const delay = Math.min(1500 * 1.2 ** polls, 20_000);
     const timer = setTimeout(() => {
       polls += 1;
       reload();
-    }, 1500);
+    }, delay);
     return () => clearTimeout(timer);
   });
 
@@ -342,6 +345,13 @@
   reload();
 </script>
 
+<svelte:document
+  onvisibilitychange={() => {
+    visibleTab = document.visibilityState === "visible";
+    if (visibleTab) reload();
+  }}
+/>
+
 <svelte:window
   onpopstate={() => {
     route = parseRoute(location.pathname);
@@ -365,6 +375,7 @@
       onnewfolder={() => (dialog = { kind: "newFolder" })}
       oneditfolder={(folder) => (dialog = { kind: "editFolder", folder })}
       {onlogout}
+      onimported={reload}
     />
   </aside>
   <button
@@ -514,6 +525,7 @@
           {highlights}
           folderName={showFolders ? folderName : undefined}
           onedit={(bookmark) => (dialog = { kind: "edit", bookmark })}
+          resetKey={`${routePath(route)}|${query}|${sort}`}
         />
       {/if}
     </main>

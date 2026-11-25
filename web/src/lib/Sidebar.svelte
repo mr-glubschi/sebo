@@ -1,10 +1,12 @@
 <script lang="ts">
+  import { api, errorText } from "./api";
   import type { Folder } from "./bindings/Folder";
   import { drag } from "./drag.svelte";
   import Footer from "./Footer.svelte";
   import FolderTree from "./FolderTree.svelte";
   import Icon from "./Icon.svelte";
   import { routePath, type Route, type Tree } from "./library";
+  import { toasts } from "./toast.svelte";
 
   interface Props {
     tree: Tree;
@@ -16,6 +18,8 @@
     onnewfolder: () => void;
     oneditfolder: (folder: Folder) => void;
     onlogout: () => void;
+    /** Nach einem Import, damit die Liste neu geladen wird. */
+    onimported: () => void;
   }
 
   let {
@@ -28,7 +32,31 @@
     onnewfolder,
     oneditfolder,
     onlogout,
+    onimported,
   }: Props = $props();
+
+  let fileInput = $state<HTMLInputElement>();
+  let importing = $state(false);
+
+  async function importFile(event: Event & { currentTarget: HTMLInputElement }) {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    if (!file || importing) return;
+    importing = true;
+    try {
+      const result = await api.importFile(file);
+      const parts = [`${result.bookmarks} Bookmarks und ${result.folders} Ordner importiert`];
+      if (result.duplicates > 0) parts.push(`${result.duplicates} schon vorhanden`);
+      if (result.invalid > 0) parts.push(`${result.invalid} ungültig`);
+      if (result.dropped > 0) parts.push(`${result.dropped} wegen Obergrenze weggelassen`);
+      toasts.show(parts.join(", "));
+      onimported();
+    } catch (e) {
+      toasts.show(errorText(e), true);
+    } finally {
+      importing = false;
+    }
+  }
 
   const COLLAPSED_KEY = "sebo.collapsed";
 
@@ -121,6 +149,25 @@
   {/if}
 
   <div class="bottom">
+    <div class="transfer">
+      <button
+        type="button"
+        class="secondary"
+        disabled={importing}
+        onclick={() => fileInput?.click()}
+        title="HTML-Exportdatei eines Browsers oder von SEBO"
+      >
+        {importing ? "Importiere …" : "Importieren"}
+      </button>
+      <a class="button secondary" href="/api/export" download>Exportieren</a>
+      <input
+        bind:this={fileInput}
+        type="file"
+        accept=".html,.htm,text/html"
+        hidden
+        onchange={importFile}
+      />
+    </div>
     <button type="button" class="secondary logout" onclick={onlogout}>
       <Icon name="logout" />
       Abmelden
@@ -203,6 +250,19 @@
   .bottom {
     margin-top: auto;
     padding-top: 1.5rem;
+  }
+
+  .transfer {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .transfer > * {
+    font-size: 0.9rem;
+    font-weight: 500;
+    padding-inline: 0.5rem;
   }
 
   .logout {

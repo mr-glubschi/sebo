@@ -1,5 +1,6 @@
 import type { Bookmark } from "./bindings/Bookmark";
 import type { Folder } from "./bindings/Folder";
+import type { ImportResult } from "./bindings/ImportResult";
 import type { Library } from "./bindings/Library";
 import type { Preview } from "./bindings/Preview";
 
@@ -21,10 +22,12 @@ export function onUnauthorized(handler: () => void) {
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const raw = body instanceof Blob;
   const response = await fetch(`/api${path}`, {
     method,
-    headers: body === undefined ? {} : { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    headers:
+      body === undefined ? {} : { "Content-Type": raw ? "text/html" : "application/json" },
+    body: body === undefined ? undefined : raw ? body : JSON.stringify(body),
   });
 
   if (!response.ok) {
@@ -102,4 +105,5 @@ export const api = {
   refreshBookmark: (id: number) => request<Bookmark>("POST", `/bookmarks/${id}/refresh`),
   removeImage: (id: number) => request<Bookmark>("DELETE", `/bookmarks/${id}/image`),
   preview: (url: string) => request<Preview>("POST", "/preview", { url }),
+  importFile: (file: File) => request<ImportResult>("POST", "/import", file),
 };

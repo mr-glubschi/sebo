@@ -589,6 +589,105 @@ pub fn store_fetch_result(
     Ok(changed > 0)
 }
 
+/// Ergebnis eines Imports.
+#[derive(Debug, Default, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct ImportResult {
+    /// Neu angelegte Ordner (gleichnamige vorhandene Ordner werden weiterverwendet).
+    pub folders: u32,
+    pub bookmarks: u32,
+    /// Übersprungen, weil die Adresse schon gespeichert ist.
+    pub duplicates: u32,
+    /// Übersprungen, weil die Adresse ungültig ist (z. B. `javascript:`).
+    pub invalid: u32,
+    /// Weggelassen, weil die Datei zu viele Einträge hat.
+    pub dropped: u32,
+}
+
+/// Übernimmt eine importierte Ordnerstruktur in einer Transaktion.
+/// Doppelte Adressen werden übersprungen, gleichnamige Ordner zusammengeführt.
+pub fn import(
+    conn: &mut Connection,
+    root: &crate::netscape::ImportFolder,
+    dropped: usize,
+) -> Result<ImportResult> {
+    let tx = conn.transaction()?;
+    let mut existing: std::collections::HashSet<String> = tx
+        .prepare("SELECT url FROM bookmarks")?
+        .query_map([], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut result = ImportResult {
+        dropped: u32::try_from(dropped).unwrap_or(u32::MAX),
+        ..Default::default()
+    };
+    import_level(&tx, root, None, &mut existing, &mut result, now_secs())?;
+    tx.commit()?;
+    Ok(result)
+}
+
+fn import_level(
+    tx: &Connection,
+    folder: &crate::netscape::ImportFolder,
+    parent: Option<i64>,
+    existing: &mut std::collections::HashSet<String>,
+    result: &mut ImportResult,
+    now: i64,
+) -> Result<()> {
+    // Nur sinnvolle Zeitstempel übernehmen (nicht in der Zukunft).
+    let date = |value: Option<i64>| value.filter(|&v| v <= now + 86_400).unwrap_or(now);
+
+    let mut insert = tx.prepare_cached(
+        "INSERT INTO bookmarks (folder_id, url, title, title_auto, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+    )?;
+    for bookmark in &folder.bookmarks {
+        let Ok(url) = parse_url(&bookmark.url) else {
+            result.invalid += 1;
+            continue;
+        };
+        if !existing.insert(url.as_str().to_string()) {
+            result.duplicates += 1;
+            continue;
+        }
+        let title = clean_title(&bookmark.title);
+        let title_auto = title.is_none();
+        let title = title.unwrap_or_else(|| fallback_title(&url));
+        insert.execute(params![
+            parent,
+            url.as_str(),
+            title,
+            title_auto,
+            date(bookmark.add_date)
+        ])?;
+        result.bookmarks += 1;
+    }
+    drop(insert);
+
+    for child in &folder.folders {
+        let name = clean_folder_name(&child.name).unwrap_or_else(|_| "Ohne Namen".into());
+        let found: Option<i64> = tx
+            .query_row(
+                "SELECT id FROM folders WHERE parent_id IS ?1 AND name = ?2 ORDER BY id LIMIT 1",
+                params![parent, name],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let id = match found {
+            Some(id) => id,
+            None => {
+                tx.execute(
+                    "INSERT INTO folders (parent_id, name, created_at) VALUES (?1, ?2, ?3)",
+                    params![parent, name, date(child.add_date)],
+                )?;
+                result.folders += 1;
+                tx.last_insert_rowid()
+            }
+        };
+        import_level(tx, child, Some(id), existing, result, now)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

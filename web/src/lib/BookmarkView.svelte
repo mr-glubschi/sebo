@@ -14,13 +14,41 @@
     /** Ordnername anzeigen (Übersicht und Suche). */
     folderName?: (id: number | null) => string;
     onedit: (bookmark: Bookmark) => void;
+    /** Ändert sich beim Wechsel von Ordner, Suche oder Sortierung: wieder oben anfangen. */
+    resetKey: string;
   }
 
-  let { bookmarks, view, highlights, folderName, onedit }: Props = $props();
+  let { bookmarks, view, highlights, folderName, onedit, resetKey }: Props = $props();
+
+  // Nur so viele Einträge ins DOM, wie gebraucht werden; beim Scrollen kommen weitere dazu.
+  const PAGE = 150;
+  let limit = $state(PAGE);
+  let sentinel = $state<HTMLElement>();
+  const shown = $derived(bookmarks.length > limit ? bookmarks.slice(0, limit) : bookmarks);
+
+  $effect(() => {
+    void resetKey;
+    limit = PAGE;
+  });
+
+  // Bei jeder Erhöhung neu beobachten: Ist die Markierung dann noch sichtbar,
+  // meldet der neue Observer das sofort und es wird weiter nachgeladen.
+  $effect(() => {
+    void limit;
+    if (!sentinel) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) limit += PAGE;
+      },
+      { rootMargin: "1200px 0px" },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  });
 </script>
 
 <ul class={view}>
-  {#each bookmarks as bookmark (bookmark.id)}
+  {#each shown as bookmark (bookmark.id)}
     {@const parts = highlights?.get(bookmark.id)}
     <li
       use:draggable={{ kind: "bookmark", id: bookmark.id, label: bookmark.title }}
@@ -66,8 +94,17 @@
     </li>
   {/each}
 </ul>
+{#if shown.length < bookmarks.length}
+  <div class="more" bind:this={sentinel}>{bookmarks.length - shown.length} weitere …</div>
+{/if}
 
 <style>
+  .more {
+    padding: 1.5rem;
+    text-align: center;
+    color: var(--muted);
+  }
+
   ul {
     list-style: none;
     margin: 0;

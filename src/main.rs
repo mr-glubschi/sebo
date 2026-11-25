@@ -7,6 +7,7 @@ mod library;
 mod library_api;
 mod meta;
 mod net;
+mod netscape;
 mod password;
 mod security;
 mod session;
