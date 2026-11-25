@@ -234,7 +234,7 @@ export function droppedLinks(data: DataTransfer): DroppedLink[] {
       const doc = new DOMParser().parseFromString(html, "text/html");
       for (const anchor of Array.from(doc.querySelectorAll("a[href]")).slice(0, MAX_DROPPED)) {
         const href = anchor.getAttribute("href") ?? "";
-        const text = anchor.textContent?.replace(/s+/g, " ").trim();
+        const text = anchor.textContent?.replace(/\s+/g, " ").trim();
         links.push({ url: href, title: text ? text.slice(0, 300) : undefined });
       }
     }

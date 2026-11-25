@@ -237,6 +237,17 @@
     border-radius: var(--radius);
   }
 
+  /* Lange, weit gescrollte Listen: Layout und Zeichnen nur für Sichtbares */
+  .list li,
+  .compact li {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 3.6rem;
+  }
+
+  .compact li {
+    contain-intrinsic-size: auto 2.2rem;
+  }
+
   .list li + li,
   .compact li + li {
     border-top: 1px solid var(--border);

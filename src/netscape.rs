@@ -72,65 +72,138 @@ fn walk(
     }
     let mut pending: Option<usize> = None;
     for child in element.children().filter_map(ElementRef::wrap) {
-        match child.value().name() {
-            "h3" => {
-                if counter.folders >= MAX_FOLDERS || depth >= MAX_DEPTH {
-                    // Inhalt landet im aktuellen Ordner.
-                    if counter.folders >= MAX_FOLDERS {
-                        counter.dropped += 1;
-                    }
-                    pending = None;
-                    continue;
-                }
-                counter.folders += 1;
-                current.folders.push(ImportFolder {
-                    name: heading_text(child),
-                    add_date: date(child),
-                    ..Default::default()
-                });
-                let index = current.folders.len() - 1;
-                // Kaputte Dateien: Ein nicht geschlossenes <H3> enthält den
-                // Rest der Ebene. Dessen Links gehören in diesen Ordner.
-                if child.children().any(|node| node.value().is_element()) {
-                    let folder = &mut current.folders[index];
-                    walk(child, folder, depth + 1, level + 1, counter);
-                }
-                pending = Some(index);
-            }
-            "dl" => match pending.take() {
-                Some(index) => {
-                    let folder = &mut current.folders[index];
-                    walk(child, folder, depth + 1, level + 1, counter);
-                }
-                None => {
-                    walk(child, current, depth, level + 1, counter);
-                }
-            },
-            "a" => {
-                let Some(url) = child.value().attr("href") else {
-                    continue;
-                };
-                if counter.bookmarks >= MAX_BOOKMARKS {
+        visit(child, current, depth, level, counter, &mut pending);
+    }
+    pending
+}
+
+/// Verarbeitet ein Element. `pending` ist ein gerade per `<H3>` angelegter
+/// Ordner (Index in `current.folders`), dessen `<DL>` noch folgen kann.
+fn visit(
+    child: ElementRef,
+    current: &mut ImportFolder,
+    depth: usize,
+    level: usize,
+    counter: &mut Counter,
+    pending: &mut Option<usize>,
+) {
+    match child.value().name() {
+        "h3" => {
+            if counter.folders >= MAX_FOLDERS || depth >= MAX_DEPTH {
+                // Inhalt landet im aktuellen Ordner.
+                if counter.folders >= MAX_FOLDERS {
                     counter.dropped += 1;
-                    continue;
                 }
-                counter.bookmarks += 1;
-                current.bookmarks.push(ImportBookmark {
-                    url: url.trim().to_string(),
-                    title: text(child),
-                    add_date: date(child),
-                });
+                *pending = None;
+                return;
             }
-            // DT, P, DD, BODY usw.: Inhalt gehört zur selben Ebene. Ein darin
-            // angelegter Ordner kann seine DL als nächstes Geschwister haben.
-            _ => {
-                if let Some(index) = walk(child, current, depth, level + 1, counter) {
-                    pending = Some(index);
+            counter.folders += 1;
+            current.folders.push(ImportFolder {
+                name: heading_text(child),
+                add_date: date(child),
+                ..Default::default()
+            });
+            let index = current.folders.len() - 1;
+            *pending = Some(index);
+
+            // Kaputte Dateien: Ein nicht geschlossenes <H3> enthält seine <DL>
+            // und alle folgenden Geschwister. Bis einschließlich der ersten <DL>
+            // gehört alles in diesen Ordner, der Rest in die aktuelle Ebene.
+            let mut list_seen = false;
+            for inner in child.children().filter_map(ElementRef::wrap) {
+                if list_seen {
+                    visit(inner, current, depth, level + 1, counter, pending);
+                } else {
+                    let is_list = inner.value().name() == "dl";
+                    let folder = &mut current.folders[index];
+                    let mut inner_pending = None;
+                    if is_list {
+                        walk(inner, folder, depth + 1, level + 1, counter);
+                        list_seen = true;
+                        *pending = None;
+                    } else if inner.value().name() == "a" {
+                        // Ein <A> in einer Überschrift ist eine Kopie eines nicht
+                        // geschlossenen Links davor, kein eigenes Bookmark.
+                        for nested in inner.children().filter_map(ElementRef::wrap) {
+                            visit(
+                                nested,
+                                folder,
+                                depth + 1,
+                                level + 1,
+                                counter,
+                                &mut inner_pending,
+                            );
+                        }
+                    } else {
+                        visit(
+                            inner,
+                            folder,
+                            depth + 1,
+                            level + 1,
+                            counter,
+                            &mut inner_pending,
+                        );
+                    }
                 }
             }
         }
+        "dl" => match pending.take() {
+            Some(index) => {
+                let folder = &mut current.folders[index];
+                walk(child, folder, depth + 1, level + 1, counter);
+            }
+            None => {
+                walk(child, current, depth, level + 1, counter);
+            }
+        },
+        "a" => {
+            // Kopie eines nicht geschlossenen <A>, die der Parser um folgende
+            // Einträge legt (kein eigener Text, nur Struktur): nur der Inhalt zählt.
+            let own_text = child
+                .children()
+                .any(|node| node.value().as_text().is_some_and(|t| !t.trim().is_empty()));
+            let has_elements = child.children().any(|node| node.value().is_element());
+            if !own_text && has_elements {
+                for inner in child.children().filter_map(ElementRef::wrap) {
+                    visit(inner, current, depth, level + 1, counter, pending);
+                }
+                return;
+            }
+            let Some(url) = child.value().attr("href") else {
+                return;
+            };
+            if counter.bookmarks >= MAX_BOOKMARKS {
+                counter.dropped += 1;
+                return;
+            }
+            // Kopien desselben Links direkt hintereinander (entstehen beim
+            // Parsen nicht geschlossener <A>) nur einmal übernehmen.
+            let url = url.trim();
+            if current.bookmarks.last().is_some_and(|last| last.url == url) {
+                return;
+            }
+            counter.bookmarks += 1;
+            current.bookmarks.push(ImportBookmark {
+                url: url.to_string(),
+                title: text(child),
+                add_date: date(child),
+            });
+            // Kaputte Dateien: Ein nicht geschlossenes <A> enthält die folgenden
+            // Einträge. Deren Links nicht doppelt zählen, aber übernehmen.
+            if child.children().any(|node| node.value().is_element()) {
+                for inner in child.children().filter_map(ElementRef::wrap) {
+                    visit(inner, current, depth, level + 1, counter, pending);
+                }
+            }
+        }
+        // DT, P, DD, BODY usw.: Inhalt gehört zur selben Ebene. Ein darin
+        // angelegter Ordner kann seine DL als nächstes Geschwister haben.
+        _ => {
+            if let Some(index) = walk(child, current, depth, level + 1, counter) {
+                *pending = Some(index);
+            }
+        }
     }
-    pending
 }
 
 /// Name eines Ordners: nur der eigene Text des <H3>, nicht der von
@@ -345,6 +418,41 @@ mod tests {
         );
         assert_eq!(names[0], "Offen");
         assert!(names.contains(&"Noch"));
+    }
+
+    fn urls(folder: &ImportFolder) -> Vec<String> {
+        folder.bookmarks.iter().map(|b| b.url.clone()).collect()
+    }
+
+    #[test]
+    fn offenes_h3_mit_geschwistern() {
+        let html = r#"<DL><DT><H3>F21a<DL><DT><A HREF="http://a/">a</A></DL><DT><H3>F21b</H3><DL><DT><A HREF="http://b/">b</A></DL></DL>"#;
+        let (root, _) = parse(html).unwrap();
+        let names: Vec<_> = root.folders.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, ["F21a", "F21b"]);
+        assert_eq!(urls(&root.folders[0]), ["http://a/"]);
+        assert_eq!(urls(&root.folders[1]), ["http://b/"]);
+
+        let html = r#"<DL><DT><H3>F23a<DL><DT><A HREF="http://a/">a</A></DL><DT><A HREF="http://c/">c</A></DL>"#;
+        let (root, _) = parse(html).unwrap();
+        assert_eq!(urls(&root.folders[0]), ["http://a/"]);
+        assert_eq!(urls(&root), ["http://c/"]);
+    }
+
+    #[test]
+    fn offene_links_werden_nicht_doppelt_gezaehlt() {
+        let html = r#"<DL><DT><H3>F22a</H3><DL><DT><A HREF="http://a/">a<DT><A HREF="http://b/">b</DL><DT><H3>F22b</H3><DL><DT><A HREF="http://c/">c</A></DL></DL>"#;
+        let (root, _) = parse(html).unwrap();
+        let mut all = Vec::new();
+        fn collect(folder: &ImportFolder, all: &mut Vec<String>) {
+            all.extend(folder.bookmarks.iter().map(|b| b.url.clone()));
+            for child in &folder.folders {
+                collect(child, all);
+            }
+        }
+        collect(&root, &mut all);
+        all.sort();
+        assert_eq!(all, ["http://a/", "http://b/", "http://c/"]);
     }
 
     #[test]

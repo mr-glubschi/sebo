@@ -7,8 +7,8 @@
 //! Verarbeiten abgestürzt ist) gilt das Bookmark als fehlgeschlagen.
 
 use std::{
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
-    sync::Arc,
     time::Duration,
 };
 
@@ -40,25 +40,40 @@ static CPU: Semaphore = Semaphore::const_new(2);
 
 pub fn spawn(state: AppState) {
     tokio::spawn(async move {
-        let semaphore = Arc::new(Semaphore::new(PARALLEL));
+        // Laufende Abrufe: Task-ID → Bookmark-ID. Frei werdende Plätze werden
+        // sofort nachgefüllt, ein langsamer Abruf hält die anderen nicht auf.
+        let mut tasks = JoinSet::new();
+        let mut running: HashMap<tokio::task::Id, i64> = HashMap::new();
         loop {
-            let ids = match state
-                .db
-                .call(|conn| {
-                    library::fail_exhausted(conn)?;
-                    library::pending_ids(conn, BATCH)
-                })
-                .await
-            {
-                Ok(ids) => ids,
-                Err(error) => {
-                    tracing::error!("Offene Bookmarks nicht lesbar: {error}");
-                    tokio::time::sleep(IDLE_CHECK).await;
-                    continue;
+            let free = PARALLEL - tasks.len();
+            if free > 0 {
+                let busy: HashSet<i64> = running.values().copied().collect();
+                let ids = state
+                    .db
+                    .call(move |conn| {
+                        library::fail_exhausted(conn)?;
+                        library::pending_ids(conn, BATCH + PARALLEL)
+                    })
+                    .await;
+                match ids {
+                    Ok(ids) => {
+                        for id in ids.into_iter().filter(|id| !busy.contains(id)).take(free) {
+                            let task_state = state.clone();
+                            let handle = tasks.spawn(async move { process(&task_state, id).await });
+                            running.insert(handle.id(), id);
+                        }
+                    }
+                    Err(error) => {
+                        tracing::error!("Offene Bookmarks nicht lesbar: {error}");
+                        if tasks.is_empty() {
+                            tokio::time::sleep(IDLE_CHECK).await;
+                            continue;
+                        }
+                    }
                 }
-            };
+            }
 
-            if ids.is_empty() {
+            if tasks.is_empty() {
                 tokio::select! {
                     () = state.worker.notified() => {}
                     () = tokio::time::sleep(IDLE_CHECK) => {}
@@ -66,18 +81,20 @@ pub fn spawn(state: AppState) {
                 continue;
             }
 
-            let mut tasks = JoinSet::new();
-            for id in ids {
-                let Ok(permit) = semaphore.clone().acquire_owned().await else {
-                    return;
-                };
-                let state = state.clone();
-                tasks.spawn(async move {
-                    process(&state, id).await;
-                    drop(permit);
-                });
+            tokio::select! {
+                Some(finished) = tasks.join_next_with_id() => {
+                    let id = match finished {
+                        Ok((id, ())) => id,
+                        Err(error) => {
+                            tracing::error!("Abruf abgebrochen: {error}");
+                            error.id()
+                        }
+                    };
+                    running.remove(&id);
+                }
+                // Neue Bookmarks: freie Plätze sofort belegen.
+                () = state.worker.notified(), if tasks.len() < PARALLEL => {}
             }
-            while tasks.join_next().await.is_some() {}
         }
     });
 }

@@ -214,7 +214,11 @@
   }
 
   function keydown(event: KeyboardEvent) {
-    if (event.key === "Escape" && menuOpen) menuOpen = false;
+    if (event.key === "Escape" && menuOpen) {
+      menuOpen = false;
+      // Fokus zurück auf den Menü-Knopf statt ins Leere.
+      document.querySelector<HTMLElement>("button.menu")?.focus();
+    }
     // „/“ springt in die Suche
     const typing = (event.target as Element).closest("input, textarea, select, [contenteditable]");
     if (event.key === "/" && !typing && !dialog && !event.ctrlKey && !event.metaKey) {
@@ -382,7 +386,7 @@
   ondragstart={dragstart}
 />
 
-<a class="skip" href="#inhalt">Zum Inhalt springen</a>
+<a class="skip" href="#inhalt" inert={menuOpen}>Zum Inhalt springen</a>
 
 <div class="layout" class:menu-open={menuOpen}>
   <aside id="sidebar">

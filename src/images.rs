@@ -32,11 +32,34 @@ fn decode(bytes: &[u8]) -> Result<DynamicImage, String> {
 }
 
 /// Vorschaubild: höchstens 600 px breit, als JPEG.
+/// Seitenverhältnis der Karten (Breite : Höhe), wie `aspect-ratio` im Frontend.
+const CARD_RATIO: f64 = 1.91;
+
+fn crop_to_card(image: DynamicImage) -> DynamicImage {
+    let (width, height) = (image.width(), image.height());
+    let target_height = (f64::from(width) / CARD_RATIO).round() as u32;
+    // Kleine Abweichungen (z. B. 1200×630) nicht beschneiden.
+    if f64::from(height) > f64::from(target_height) * 1.05 && target_height > 0 {
+        image.crop_imm(0, (height - target_height) / 2, width, target_height)
+    } else {
+        let target_width = (f64::from(height) * CARD_RATIO).round() as u32;
+        if f64::from(width) > f64::from(target_width) * 1.05 && target_width > 0 {
+            image.crop_imm((width - target_width) / 2, 0, target_width, height)
+        } else {
+            image
+        }
+    }
+}
+
 pub fn process_og(bytes: &[u8]) -> Result<Vec<u8>, String> {
     let image = decode(bytes)?;
     if image.width() < OG_MIN_SIZE || image.height() < OG_MIN_SIZE {
         return Err("Bild zu klein".into());
     }
+    // Die Karten zeigen das Bild mittig im Format 1,91:1 („cover“). Vorher
+    // zuschneiden: spart beim Verkleinern viel Speicher (Zwischenpuffer) und
+    // bei sehr hohen oder breiten Bildern ein Vielfaches an Dateigröße.
+    let image = crop_to_card(image);
     let image = if image.width() > OG_MAX_WIDTH {
         image.resize(OG_MAX_WIDTH, MAX_DIMENSION, FilterType::Triangle)
     } else {
@@ -140,8 +163,21 @@ mod tests {
         let out = process_og(&png(1200, 630)).unwrap();
         assert_eq!(&out[..2], &[0xFF, 0xD8], "JPEG");
         assert_eq!(dimensions(&out), (600, 315));
-        // Kleine Bilder bleiben, winzige werden abgelehnt.
-        assert_eq!(dimensions(&process_og(&png(300, 200)).unwrap()), (300, 200));
+        // Kleine Bilder werden nur zugeschnitten, winzige abgelehnt.
+        assert_eq!(dimensions(&process_og(&png(300, 200)).unwrap()), (300, 157));
+        assert_eq!(
+            dimensions(&process_og(&png(1200, 640)).unwrap()),
+            (600, 320)
+        );
+        // Sehr hohe und sehr breite Bilder: auf das Kartenformat zugeschnitten
+        assert_eq!(
+            dimensions(&process_og(&png(1600, 10_000)).unwrap()),
+            (600, 314)
+        );
+        assert_eq!(
+            dimensions(&process_og(&png(4000, 300)).unwrap()),
+            (573, 300)
+        );
         assert!(process_og(&png(1, 1)).is_err());
     }
 

@@ -70,6 +70,8 @@ Selbst gehostete Bookmark-Verwaltung im Stil von Raindrop, bewusst auf das Minim
 - Richtwerte (Release-Build, 10 000 Bookmarks): 17–21 MB RAM, Import 0,1 s, `GET /api/library` 36 ms und 133 KB gzip, Frontend ~33 MB JS-Speicher bei 5000 Bookmarks. Bei Änderungen nicht deutlich verschlechtern.
 - `GET /api/library` hat einen ETag; das Frontend schickt ihn beim Nachfragen (`If-None-Match`) und bekommt bei unveränderten Daten 304. Die Antwort bleibt `no-store`.
 - Tokio mit 2–4 Arbeits-Threads, unabhängig von der Kernzahl des Servers.
+- Vorschaubilder werden vor dem Verkleinern auf das Kartenformat 1,91:1 zugeschnitten (spart RAM beim Skalieren und Speicherplatz). Ändert sich das Kartenformat im Frontend, `CARD_RATIO` in `images.rs` anpassen.
+- Der Hintergrund-Abruf füllt freie Plätze sofort nach (kein Warten auf ganze Stapel).
 
 ## Dokumentation
 

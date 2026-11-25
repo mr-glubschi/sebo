@@ -5,6 +5,7 @@
   import FolderSelect from "./FolderSelect.svelte";
   import { subtree, type Tree } from "./library";
   import Modal from "./Modal.svelte";
+  import { toasts } from "./toast.svelte";
 
   interface Props {
     tree: Tree;
@@ -30,6 +31,11 @@
   let name = $state(initial.name);
   let parent = $state<number | null>(initial.parent);
   let contents = $state<DeleteContents>("move");
+
+  // Gewählter Elternordner wurde anderswo gelöscht: oberste Ebene.
+  $effect(() => {
+    if (parent !== null && !tree.byId.has(parent)) parent = null;
+  });
   let confirmDelete = $state(false);
   let busy = $state(false);
   let error = $state("");
@@ -52,6 +58,10 @@
     } catch (e) {
       error = errorText(e);
       if (e instanceof ApiError && (e.status === 404 || e.status === 400)) onchanged();
+      if (e instanceof ApiError && e.status === 404 && folder) {
+        toasts.show("Der Ordner wurde inzwischen gelöscht.", true);
+        onclose();
+      }
       return false;
     } finally {
       busy = false;

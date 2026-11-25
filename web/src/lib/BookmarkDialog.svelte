@@ -6,6 +6,7 @@
   import Icon from "./Icon.svelte";
   import { folderPath, type Tree } from "./library";
   import Modal from "./Modal.svelte";
+  import { toasts } from "./toast.svelte";
 
   interface Props {
     tree: Tree;
@@ -52,6 +53,11 @@
   let confirmDelete = $state(false);
 
   let previewFor = "";
+
+  // Gewählter Ordner wurde (z. B. in einem anderen Tab) gelöscht: Unsortiert.
+  $effect(() => {
+    if (folder !== null && !tree.byId.has(folder)) folder = null;
+  });
 
   // Gleiche Adresse schon gespeichert? Nur ein Hinweis, speichern bleibt möglich.
   const duplicate = $derived.by(() => {
@@ -117,6 +123,11 @@
       error = errorText(e);
       // In einem anderen Tab gelöscht oder geändert: Ansicht auffrischen.
       if (e instanceof ApiError && (e.status === 404 || e.status === 400)) onchanged();
+      // Das Bookmark selbst gibt es nicht mehr: Dialog schließen.
+      if (e instanceof ApiError && e.status === 404 && bookmark) {
+        toasts.show("Das Bookmark wurde inzwischen gelöscht.", true);
+        onclose();
+      }
     } finally {
       busy = false;
     }
