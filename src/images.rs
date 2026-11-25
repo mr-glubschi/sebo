@@ -12,7 +12,9 @@ pub const ICON_SIZE: u32 = 64;
 /// Kleinere Vorschaubilder sind meist Zählpixel oder Platzhalter.
 const OG_MIN_SIZE: u32 = 50;
 const MAX_DIMENSION: u32 = 10_000;
-const MAX_ALLOC: u64 = 128 * 1024 * 1024;
+const MAX_ALLOC: u64 = 64 * 1024 * 1024;
+/// Größere SVG-Favicons sind ungewöhnlich und teuer zu rendern.
+const MAX_SVG_BYTES: usize = 256 * 1024;
 
 fn decode(bytes: &[u8]) -> Result<DynamicImage, String> {
     let mut reader = ImageReader::new(Cursor::new(bytes))
@@ -87,6 +89,10 @@ fn looks_like_svg(bytes: &[u8]) -> bool {
 /// SVG ohne externe Ressourcen und ohne Text rendern.
 fn render_svg(bytes: &[u8]) -> Result<Vec<u8>, String> {
     use resvg::{tiny_skia, usvg};
+
+    if bytes.len() > MAX_SVG_BYTES {
+        return Err("SVG zu groß".into());
+    }
 
     // Keine Dateien und keine eingebetteten Bilder laden.
     let options = usvg::Options {

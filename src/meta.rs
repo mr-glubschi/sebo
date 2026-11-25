@@ -12,6 +12,7 @@ pub struct PageMeta {
 }
 
 pub const MAX_TITLE_CHARS: usize = 300;
+const MAX_ICON_CANDIDATES: usize = 8;
 
 pub fn parse(html: &str, page_url: &Url) -> PageMeta {
     let document = Html::parse_document(html);
@@ -100,8 +101,12 @@ pub fn parse(html: &str, page_url: &Url) -> PageMeta {
     }
     candidates.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
 
+    // Nur die besten Kandidaten behalten (eine Seite könnte Tausende enthalten).
     let mut icons: Vec<Url> = Vec::new();
     for (_, _, url) in candidates {
+        if icons.len() >= MAX_ICON_CANDIDATES {
+            break;
+        }
         if !icons.contains(&url) {
             icons.push(url);
         }

@@ -397,23 +397,35 @@ pub struct BookmarkUpdate<'a> {
     pub folder_id: Option<Option<i64>>,
 }
 
-/// Ändert ein Bookmark. Gibt zurück, ob die Seite neu abgerufen werden muss.
+pub struct UpdateOutcome {
+    pub bookmark: Bookmark,
+    /// Die Seite muss neu abgerufen werden.
+    pub refetch: bool,
+    /// Die URL hat sich geändert; alte Bilder gehören nicht mehr dazu.
+    pub url_changed: bool,
+}
+
+/// Ändert ein Bookmark.
 pub fn update_bookmark(
     conn: &Connection,
     id: i64,
     update: BookmarkUpdate,
-) -> Result<(Bookmark, bool)> {
+) -> Result<UpdateOutcome> {
     let current = get_bookmark(conn, id)?;
     let mut refetch = false;
+    let mut url_changed = false;
 
     if let Some(url) = update.url {
         let url = parse_url(url)?;
         if url.as_str() != current.url {
             conn.execute(
-                "UPDATE bookmarks SET url = ?2, meta_status = 'pending' WHERE id = ?1",
+                "UPDATE bookmarks SET url = ?2, meta_status = 'pending', fetch_attempts = 0,
+                     has_image = 0, has_icon = 0
+                 WHERE id = ?1",
                 params![id, url.as_str()],
             )?;
             refetch = true;
+            url_changed = true;
         }
     }
     if let Some(title) = update.title {
@@ -425,7 +437,8 @@ pub fn update_bookmark(
             None => {
                 refetch = true;
                 conn.execute(
-                    "UPDATE bookmarks SET title_auto = 1, meta_status = 'pending' WHERE id = ?1",
+                    "UPDATE bookmarks SET title_auto = 1, meta_status = 'pending', fetch_attempts = 0
+                     WHERE id = ?1",
                     params![id],
                 )?
             }
@@ -442,7 +455,11 @@ pub fn update_bookmark(
         "UPDATE bookmarks SET updated_at = ?2 WHERE id = ?1",
         params![id, now_secs()],
     )?;
-    Ok((get_bookmark(conn, id)?, refetch))
+    Ok(UpdateOutcome {
+        bookmark: get_bookmark(conn, id)?,
+        refetch,
+        url_changed,
+    })
 }
 
 pub fn delete_bookmark(conn: &Connection, id: i64) -> Result<()> {
@@ -454,7 +471,7 @@ pub fn delete_bookmark(conn: &Connection, id: i64) -> Result<()> {
 
 pub fn mark_for_refresh(conn: &Connection, id: i64) -> Result<Bookmark> {
     match conn.execute(
-        "UPDATE bookmarks SET meta_status = 'pending' WHERE id = ?1",
+        "UPDATE bookmarks SET meta_status = 'pending', fetch_attempts = 0 WHERE id = ?1",
         params![id],
     )? {
         0 => Err(LibraryError::NotFound),
@@ -475,10 +492,52 @@ pub fn remove_image(conn: &Connection, id: i64) -> Result<Bookmark> {
 // ---------------------------------------------------------------------------
 // Für den Hintergrund-Abruf
 
+/// Nach so vielen abgebrochenen Versuchen gilt ein Bookmark als fehlgeschlagen.
+pub const MAX_FETCH_ATTEMPTS: i64 = 3;
+
 pub fn pending_ids(conn: &Connection, limit: usize) -> rusqlite::Result<Vec<i64>> {
-    conn.prepare("SELECT id FROM bookmarks WHERE meta_status = 'pending' ORDER BY id LIMIT ?1")?
-        .query_map(params![limit as i64], |row| row.get(0))?
-        .collect()
+    conn.prepare(
+        "SELECT id FROM bookmarks WHERE meta_status = 'pending' AND fetch_attempts < ?2
+         ORDER BY id LIMIT ?1",
+    )?
+    .query_map(params![limit as i64, MAX_FETCH_ATTEMPTS], |row| row.get(0))?
+    .collect()
+}
+
+/// Bookmarks, deren Abruf mehrmals abgebrochen ist (z. B. Absturz beim
+/// Verarbeiten eines Bildes), werden nicht endlos neu versucht.
+pub fn fail_exhausted(conn: &Connection) -> rusqlite::Result<usize> {
+    conn.execute(
+        "UPDATE bookmarks SET meta_status = 'failed'
+         WHERE meta_status = 'pending' AND fetch_attempts >= ?1",
+        params![MAX_FETCH_ATTEMPTS],
+    )
+}
+
+/// Zählt einen Abrufversuch und gibt die URL zurück, falls das Bookmark
+/// noch abgerufen werden soll.
+pub fn begin_fetch(conn: &Connection, id: i64) -> rusqlite::Result<Option<String>> {
+    conn.query_row(
+        "UPDATE bookmarks SET fetch_attempts = fetch_attempts + 1
+         WHERE id = ?1 AND meta_status = 'pending'
+         RETURNING url",
+        params![id],
+        |row| row.get(0),
+    )
+    .optional()
+}
+
+/// Ob zu einem Bookmark ein Vorschaubild bzw. Favicon gespeichert ist.
+pub fn has_file(conn: &Connection, id: i64, icon: bool) -> rusqlite::Result<bool> {
+    let column = if icon { "has_icon" } else { "has_image" };
+    Ok(conn
+        .query_row(
+            &format!("SELECT {column} FROM bookmarks WHERE id = ?1"),
+            params![id],
+            |row| row.get::<_, bool>(0),
+        )
+        .optional()?
+        .unwrap_or(false))
 }
 
 /// Was der Abruf ergeben hat.
@@ -487,6 +546,17 @@ pub struct FetchResult {
     pub title: Option<String>,
     pub has_image: bool,
     pub has_icon: bool,
+}
+
+impl FetchResult {
+    pub fn failed() -> Self {
+        Self {
+            status: MetaStatus::Failed,
+            title: None,
+            has_image: false,
+            has_icon: false,
+        }
+    }
 }
 
 /// Speichert das Ergebnis, aber nur, wenn sich die URL inzwischen nicht
@@ -503,6 +573,7 @@ pub fn store_fetch_result(
              title = CASE WHEN title_auto = 1 AND ?4 IS NOT NULL THEN ?4 ELSE title END,
              has_image = CASE WHEN ?5 THEN 1 ELSE has_image END,
              has_icon = CASE WHEN ?6 THEN 1 ELSE has_icon END,
+             fetch_attempts = 0,
              updated_at = ?7
          WHERE id = ?1 AND url = ?2",
         params![
@@ -516,15 +587,6 @@ pub fn store_fetch_result(
         ],
     )?;
     Ok(changed > 0)
-}
-
-pub fn bookmark_url(conn: &Connection, id: i64) -> rusqlite::Result<Option<String>> {
-    conn.query_row(
-        "SELECT url FROM bookmarks WHERE id = ?1",
-        params![id],
-        |row| row.get(0),
-    )
-    .optional()
 }
 
 #[cfg(test)]
@@ -593,8 +655,9 @@ mod tests {
             title: Some("Mein Titel"),
             folder_id: Some(None),
         };
-        let (updated, refetch) = update_bookmark(&conn, bookmark.id, update).unwrap();
-        assert!(!refetch);
+        let outcome = update_bookmark(&conn, bookmark.id, update).unwrap();
+        assert!(!outcome.refetch && !outcome.url_changed);
+        let updated = outcome.bookmark;
         assert_eq!(
             (updated.title.as_str(), updated.folder_id),
             ("Mein Titel", None)
@@ -611,10 +674,26 @@ mod tests {
             title: None,
             folder_id: None,
         };
-        let (updated, refetch) = update_bookmark(&conn, bookmark.id, update).unwrap();
-        assert!(refetch);
-        assert_eq!(updated.meta_status, MetaStatus::Pending);
+        let outcome = update_bookmark(&conn, bookmark.id, update).unwrap();
+        assert!(outcome.refetch && outcome.url_changed);
+        assert_eq!(outcome.bookmark.meta_status, MetaStatus::Pending);
+        // Das Bild der alten URL gehört nicht mehr dazu.
+        assert_eq!(outcome.bookmark.image, None);
         assert!(!store_fetch_result(&conn, bookmark.id, &bookmark.url, &result).unwrap());
+
+        // Versuche werden gezählt; nach zu vielen gilt der Abruf als fehlgeschlagen.
+        for _ in 0..MAX_FETCH_ATTEMPTS {
+            assert!(begin_fetch(&conn, bookmark.id).unwrap().is_some());
+        }
+        assert!(pending_ids(&conn, 10).unwrap().is_empty());
+        fail_exhausted(&conn).unwrap();
+        assert_eq!(
+            get_bookmark(&conn, bookmark.id).unwrap().meta_status,
+            MetaStatus::Failed
+        );
+        assert_eq!(begin_fetch(&conn, bookmark.id).unwrap(), None);
+        mark_for_refresh(&conn, bookmark.id).unwrap();
+        assert_eq!(pending_ids(&conn, 10).unwrap(), vec![bookmark.id]);
 
         delete_bookmark(&conn, bookmark.id).unwrap();
         assert_eq!(

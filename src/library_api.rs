@@ -175,7 +175,7 @@ async fn update_bookmark(
     Path(id): Path<i64>,
     Json(input): Json<UpdateBookmark>,
 ) -> Result<Json<library::Bookmark>, ApiError> {
-    let (bookmark, refetch) = with_db(&state, move |conn| {
+    let outcome = with_db(&state, move |conn| {
         let update = BookmarkUpdate {
             url: input.url.as_deref(),
             title: input.title.as_deref(),
@@ -184,10 +184,13 @@ async fn update_bookmark(
         library::update_bookmark(conn, id, update)
     })
     .await?;
-    if refetch {
+    if outcome.url_changed {
+        library::remove_image_files(&state.images_dir, &[id]);
+    }
+    if outcome.refetch {
         state.worker.notify_one();
     }
-    Ok(Json(bookmark))
+    Ok(Json(outcome.bookmark))
 }
 
 async fn delete_bookmark(
@@ -257,12 +260,21 @@ async fn image(
 
     // Nur exakt <zahl>-og.jpg oder <zahl>-icon.png, kein Pfad.
     let (id, kind) = name.split_once('-').ok_or_else(not_found)?;
-    let content_type = match kind {
-        "og.jpg" => "image/jpeg",
-        "icon.png" => "image/png",
+    let (content_type, icon) = match kind {
+        "og.jpg" => ("image/jpeg", false),
+        "icon.png" => ("image/png", true),
         _ => return Err(not_found()),
     };
-    if id.is_empty() || !id.bytes().all(|b| b.is_ascii_digit()) || id.len() > 19 {
+    if id.is_empty() || !id.bytes().all(|b| b.is_ascii_digit()) || id.len() > 18 {
+        return Err(not_found());
+    }
+    let id: i64 = id.parse().map_err(|_| not_found())?;
+    // Nur Bilder ausliefern, die laut Datenbank zum Bookmark gehören.
+    let exists = state
+        .db
+        .call(move |conn| library::has_file(conn, id, icon))
+        .await?;
+    if !exists {
         return Err(not_found());
     }
 

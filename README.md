@@ -88,6 +88,8 @@ Den ausgegebenen Wert als Variable `PASSWORD_HASH` eintragen und `PASSWORD` entf
 
 Bookmarks auf Dienste im Heimnetz (Home Assistant, Unraid-Oberfläche usw.) lassen sich immer speichern. Standardmäßig ruft SEBO von solchen Adressen aber keine Titel und Bilder ab. Das verhindert, dass jemand über SEBO Geräte in deinem Netz ansprechen kann. Wenn du auch dort automatische Favicons möchtest, setze `ALLOW_PRIVATE_URLS=true`.
 
+Eine Lücke lässt sich nicht allgemein schließen: Eine fremde Webseite kann SEBO auf deine eigene öffentliche IP-Adresse weiterleiten. Manche Router (z. B. FRITZ!Box) antworten darauf aus dem Heimnetz mit ihrer Oberfläche. SEBO liest dabei nur Titel und Bilder, sendet nichts und kann sich nirgends anmelden. Wer das ausschließen will, schaltet am Router den Zugriff auf die Oberfläche über die öffentliche Adresse ab.
+
 ## Zugriff von außen
 
 Die App sollte nicht direkt ins Internet gestellt werden. Für den Zugriff von unterwegs empfiehlt sich ein Reverse Proxy mit HTTPS (z. B. Nginx Proxy Manager, SWAG) oder ein VPN (z. B. WireGuard, Tailscale). Für die Installation als Web-App am Handy ist HTTPS erforderlich.

@@ -262,9 +262,13 @@ fn is_forbidden_v6(ip: Ipv6Addr) -> bool {
     let embedded_v4 = |high: u16, low: u16| {
         Ipv4Addr::new((high >> 8) as u8, high as u8, (low >> 8) as u8, low as u8)
     };
-    if segments[0] == 0x0064 && segments[1] == 0xff9b {
+    if segments[..6] == [0x0064, 0xff9b, 0, 0, 0, 0] {
         // NAT64 64:ff9b::/96
         return is_forbidden_v4(embedded_v4(segments[6], segments[7]));
+    }
+    if segments[0] == 0x0064 && segments[1] == 0xff9b && segments[2] == 0x0001 {
+        // Lokale NAT64-Präfixe 64:ff9b:1::/48 (RFC 8215), Lage der IPv4 variabel.
+        return true;
     }
     if segments[0] == 0x2002 {
         // 6to4 2002::/16
@@ -311,6 +315,7 @@ mod tests {
             "64:ff9b::c0a8:0101",
             "2002:c0a8:0101::1",
             "::192.168.1.1",
+            "64:ff9b:1::808:808",
         ] {
             assert!(forbidden(ip), "{ip} sollte gesperrt sein");
         }

@@ -12,7 +12,9 @@ CREATE INDEX folders_parent ON folders (parent_id);
 -- title_auto = 1: Titel darf durch den abgerufenen Seitentitel ersetzt werden.
 -- has_image / has_icon: Datei liegt unter /data/images/<id>-og.jpg bzw. <id>-icon.png.
 CREATE TABLE bookmarks (
-    id          INTEGER PRIMARY KEY,
+    -- AUTOINCREMENT: IDs gelöschter Bookmarks werden nie wiederverwendet
+    -- (Bilddateien sind nach der ID benannt).
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
     folder_id   INTEGER REFERENCES folders (id) ON DELETE CASCADE,
     url         TEXT    NOT NULL,
     title       TEXT    NOT NULL,
@@ -21,6 +23,8 @@ CREATE TABLE bookmarks (
     has_icon    INTEGER NOT NULL DEFAULT 0,
     meta_status TEXT    NOT NULL DEFAULT 'pending'
         CHECK (meta_status IN ('pending', 'done', 'failed', 'skipped')),
+    -- Abgebrochene Abrufversuche seit dem letzten Ergebnis.
+    fetch_attempts INTEGER NOT NULL DEFAULT 0,
     created_at  INTEGER NOT NULL,
     updated_at  INTEGER NOT NULL
 ) STRICT;

@@ -1,12 +1,18 @@
 //! Hintergrund-Abruf von Titel, Vorschaubild und Favicon.
 //!
 //! Offene Bookmarks stehen mit `meta_status = 'pending'` in der Datenbank.
-//! Dadurch geht nach einem Neustart nichts verloren. Höchstens
-//! `PARALLEL` Bookmarks werden gleichzeitig abgerufen.
+//! Dadurch geht nach einem Neustart nichts verloren. Höchstens `PARALLEL`
+//! Bookmarks werden gleichzeitig abgerufen. Jeder Versuch wird gezählt;
+//! nach `library::MAX_FETCH_ATTEMPTS` (z. B. weil der Container beim
+//! Verarbeiten abgestürzt ist) gilt das Bookmark als fehlgeschlagen.
 
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
-use tokio::{sync::Semaphore, task::JoinSet};
+use tokio::{sync::Semaphore, task::JoinSet, time::timeout};
 use url::Url;
 
 use crate::{
@@ -23,6 +29,14 @@ pub const MAX_HTML_BYTES: usize = 1024 * 1024;
 pub const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
 const MAX_ICON_ATTEMPTS: usize = 3;
 const IDLE_CHECK: Duration = Duration::from_secs(60);
+/// Gesamtfrist für Seite, Vorschaubild und Favicons eines Bookmarks.
+const FETCH_DEADLINE: Duration = Duration::from_secs(30);
+/// Frist für rechenintensive Arbeit (HTML-Parsing, Bilder).
+const CPU_DEADLINE: Duration = Duration::from_secs(10);
+
+/// Begrenzt rechen- und speicherintensive Bildverarbeitung auf zwei
+/// gleichzeitige Aufgaben, unabhängig von der Zahl paralleler Abrufe.
+static CPU: Semaphore = Semaphore::const_new(2);
 
 pub fn spawn(state: AppState) {
     tokio::spawn(async move {
@@ -30,7 +44,10 @@ pub fn spawn(state: AppState) {
         loop {
             let ids = match state
                 .db
-                .call(|conn| library::pending_ids(conn, BATCH))
+                .call(|conn| {
+                    library::fail_exhausted(conn)?;
+                    library::pending_ids(conn, BATCH)
+                })
                 .await
             {
                 Ok(ids) => ids,
@@ -66,9 +83,10 @@ pub fn spawn(state: AppState) {
 }
 
 pub(crate) async fn process(state: &AppState, id: i64) {
+    // Zählt den Versuch, bevor gearbeitet wird.
     let url = match state
         .db
-        .call(move |conn| library::bookmark_url(conn, id))
+        .call(move |conn| library::begin_fetch(conn, id))
         .await
     {
         Ok(Some(url)) => url,
@@ -79,14 +97,20 @@ pub(crate) async fn process(state: &AppState, id: i64) {
         }
     };
 
+    let mut files = NewFiles::default();
     let result = match Url::parse(&url) {
-        Ok(parsed) => fetch_all(&state.fetcher, &parsed, &state.images_dir, id).await,
-        Err(_) => FetchResult {
-            status: MetaStatus::Failed,
-            title: None,
-            has_image: false,
-            has_icon: false,
-        },
+        Ok(parsed) => {
+            let work = fetch_all(&state.fetcher, &parsed, &state.images_dir, id, &mut files);
+            match timeout(FETCH_DEADLINE, work).await {
+                Ok(result) => result,
+                Err(_) => {
+                    tracing::info!("Abruf von {url} hat zu lange gedauert");
+                    files.discard().await;
+                    FetchResult::failed()
+                }
+            }
+        }
+        Err(_) => FetchResult::failed(),
     };
     tracing::debug!("Bookmark {id}: {:?}", result.status);
 
@@ -95,27 +119,65 @@ pub(crate) async fn process(state: &AppState, id: i64) {
         .call(move |conn| library::store_fetch_result(conn, id, &url, &result))
         .await;
     match stored {
-        Ok(true) => {}
-        // URL wurde inzwischen geändert oder Bookmark gelöscht.
-        Ok(false) => tracing::debug!("Bookmark {id} hat sich während des Abrufs geändert"),
+        Ok(true) => files.commit().await,
+        // Bookmark wurde inzwischen gelöscht oder die URL geändert:
+        // die neuen Bilder gehören nicht mehr dazu.
+        Ok(false) => {
+            tracing::debug!("Bookmark {id} hat sich während des Abrufs geändert");
+            files.discard().await;
+        }
         Err(error) => {
             tracing::error!("Ergebnis für Bookmark {id} nicht speicherbar: {error}");
-            // Nicht endlos neu versuchen.
-            let _ = state
-                .db
-                .call(move |conn| {
-                    conn.execute(
-                        "UPDATE bookmarks SET meta_status = 'failed' WHERE id = ?1",
-                        [id],
-                    )
-                })
-                .await;
+            files.discard().await;
         }
     }
 }
 
-/// Holt Seite, Vorschaubild und Favicon und legt die Bilder ab.
-async fn fetch_all(fetcher: &Fetcher, url: &Url, images_dir: &Path, id: i64) -> FetchResult {
+/// Neu geschriebene Bilder. Sie liegen zunächst unter einem temporären
+/// Namen und werden erst nach dem Speichern in der Datenbank übernommen.
+#[derive(Default)]
+struct NewFiles(Vec<(PathBuf, PathBuf)>);
+
+impl NewFiles {
+    async fn write(&mut self, target: PathBuf, bytes: &[u8]) -> bool {
+        let temporary = target.with_extension("new");
+        match tokio::fs::write(&temporary, bytes).await {
+            Ok(()) => {
+                self.0.push((temporary, target));
+                true
+            }
+            Err(error) => {
+                tracing::error!("Bild {} nicht speicherbar: {error}", target.display());
+                let _ = tokio::fs::remove_file(&temporary).await;
+                false
+            }
+        }
+    }
+
+    async fn commit(self) {
+        for (temporary, target) in self.0 {
+            if let Err(error) = tokio::fs::rename(&temporary, &target).await {
+                tracing::error!("Bild {} nicht übernehmbar: {error}", target.display());
+                let _ = tokio::fs::remove_file(&temporary).await;
+            }
+        }
+    }
+
+    async fn discard(&mut self) {
+        for (temporary, _) in self.0.drain(..) {
+            let _ = tokio::fs::remove_file(&temporary).await;
+        }
+    }
+}
+
+/// Holt Seite, Vorschaubild und Favicon.
+async fn fetch_all(
+    fetcher: &Fetcher,
+    url: &Url,
+    images_dir: &Path,
+    id: i64,
+    files: &mut NewFiles,
+) -> FetchResult {
     let mut result = FetchResult {
         status: MetaStatus::Done,
         title: None,
@@ -144,12 +206,16 @@ async fn fetch_all(fetcher: &Fetcher, url: &Url, images_dir: &Path, id: i64) -> 
     if let Some(image_url) = page.image
         && let Some(bytes) = fetch_processed(fetcher, &image_url, images::process_og).await
     {
-        result.has_image = write_file(&library::image_path(images_dir, id), &bytes).await;
+        result.has_image = files
+            .write(library::image_path(images_dir, id), &bytes)
+            .await;
     }
 
     for icon_url in page.icons.iter().take(MAX_ICON_ATTEMPTS) {
         if let Some(bytes) = fetch_processed(fetcher, icon_url, images::process_icon).await {
-            result.has_icon = write_file(&library::icon_path(images_dir, id), &bytes).await;
+            result.has_icon = files
+                .write(library::icon_path(images_dir, id), &bytes)
+                .await;
             break;
         }
     }
@@ -158,8 +224,9 @@ async fn fetch_all(fetcher: &Fetcher, url: &Url, images_dir: &Path, id: i64) -> 
 
 /// Ruft nur den Titel einer Seite ab (für den „+“-Dialog).
 pub async fn fetch_title(fetcher: &Fetcher, url: &Url) -> Option<String> {
-    fetch_page(fetcher, url)
+    timeout(FETCH_DEADLINE, fetch_page(fetcher, url))
         .await
+        .ok()?
         .ok()
         .and_then(|page| page.title)
 }
@@ -186,10 +253,9 @@ async fn fetch_page(fetcher: &Fetcher, url: &Url) -> Result<meta::PageMeta, Fetc
     }
     let html = String::from_utf8_lossy(&response.body).into_owned();
     let final_url = response.url;
-    // HTML-Parsing kann bei großen Seiten etwas dauern.
-    tokio::task::spawn_blocking(move || meta::parse(&html, &final_url))
+    run_limited(move || Ok(meta::parse(&html, &final_url)))
         .await
-        .map_err(|error| FetchError::Other(error.to_string()))
+        .map_err(FetchError::Other)
 }
 
 async fn fetch_processed(
@@ -202,25 +268,24 @@ async fn fetch_processed(
         .await
         .map_err(|error| tracing::debug!("Bild {url} nicht abrufbar: {error}"))
         .ok()?;
-    tokio::task::spawn_blocking(move || process(&response.body))
+    run_limited(move || process(&response.body))
         .await
-        .ok()?
         .map_err(|error| tracing::debug!("Bild {url} nicht verwendbar: {error}"))
         .ok()
 }
 
-/// Schreibt über eine temporäre Datei, damit nie halbe Bilder ausgeliefert werden.
-async fn write_file(path: &Path, bytes: &[u8]) -> bool {
-    let temporary = path.with_extension("tmp");
-    let result = async {
-        tokio::fs::write(&temporary, bytes).await?;
-        tokio::fs::rename(&temporary, path).await
+/// Führt rechenintensive Arbeit in einem eigenen Thread aus, begrenzt in
+/// Anzahl und Dauer. Läuft die Arbeit zu lange, wird nicht mehr darauf
+/// gewartet; der Abruf geht ohne Ergebnis weiter.
+async fn run_limited<T, F>(work: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    let _permit = CPU.acquire().await.map_err(|error| error.to_string())?;
+    match timeout(CPU_DEADLINE, tokio::task::spawn_blocking(work)).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(error)) => Err(format!("Verarbeitung abgebrochen: {error}")),
+        Err(_) => Err("Verarbeitung dauerte zu lange".into()),
     }
-    .await;
-    if let Err(error) = result {
-        tracing::error!("Bild {} nicht speicherbar: {error}", path.display());
-        let _ = tokio::fs::remove_file(&temporary).await;
-        return false;
-    }
-    true
 }

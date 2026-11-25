@@ -28,6 +28,8 @@ Selbst gehostete Bookmark-Verwaltung im Stil von Raindrop, bewusst auf das Minim
 - **SSRF:** Jeder Abruf fremder URLs geht durch die zentrale Abruf-Funktion mit IP-Prüfung nach DNS-Auflösung, festgelegter IP und einzeln geprüften Weiterleitungen. Interne Adressen nur mit `ALLOW_PRIVATE_URLS=true`. Bookmarks auf interne Adressen dürfen trotzdem immer gespeichert werden.
 - Alle fremden Eingaben begrenzen (HTML 1 MB, Bild 5 MB + Pixel-Limit, SVG ohne externe Ressourcen, Importgröße).
 - Strikte CSP, kein Inline-Skript, kein `{@html}` im Frontend. Bilder nur vom eigenen Server ausliefern, nie SVG.
+- Titel und URLs stammen von fremden Seiten: im Frontend nur als Text ausgeben, nie als HTML. Links nur mit der vom Server geprüften URL und `rel="noopener noreferrer"`.
+- Bilder werden erst unter temporärem Namen geschrieben und nur übernommen, wenn das Ergebnis gespeichert wurde (Bookmark nicht inzwischen gelöscht/geändert). Abrufe haben eine Gesamtfrist (30 s), Bildverarbeitung läuft begrenzt (2 gleichzeitig, 10 s). Nach 3 abgebrochenen Versuchen: `failed`.
 
 ## Technik
 
