@@ -6,6 +6,7 @@
   import FolderTree from "./FolderTree.svelte";
   import Icon from "./Icon.svelte";
   import { folderPath, routePath, type Route, type Tree } from "./library";
+  import { selection } from "./selection.svelte";
   import { toasts } from "./toast.svelte";
 
   interface Props {
@@ -14,9 +15,12 @@
     counts: Map<number, number>;
     total: number;
     unsorted: number;
+    favorites: number;
     onnavigate: (route: Route) => void;
     onnewfolder: () => void;
-    oneditfolder: (folder: Folder) => void;
+    onfoldermenu: (folder: Folder, event: MouseEvent, trigger?: HTMLElement) => void;
+    /** Aktion für die ausgewählten Ordner. */
+    onfolderbulk: (action: "merge" | "move" | "delete") => void;
     onlogout: () => void;
     /** Nach einem Import, damit die Liste neu geladen wird. */
     onimported: () => void;
@@ -28,9 +32,11 @@
     counts,
     total,
     unsorted,
+    favorites,
     onnavigate,
     onnewfolder,
-    oneditfolder,
+    onfoldermenu,
+    onfolderbulk,
     onlogout,
     onimported,
   }: Props = $props();
@@ -114,6 +120,13 @@
     onnavigate(target);
   }
 
+  const selecting = $derived(selection.is("folder"));
+  // Ein gezogener Unterordner kann auf die Überschrift „Ordner“: oberste Ebene.
+  const rootDrop = $derived(
+    drag.item?.kind === "folder" && tree.byId.get(drag.item.id)?.parent_id !== null,
+  );
+
+  const FAVORITES: Route = { kind: "favorites" };
   const ALL: Route = { kind: "all" };
   const UNSORTED: Route = { kind: "unsorted" };
 </script>
@@ -122,6 +135,19 @@
   <div class="brand">SEBO</div>
 
   <ul class="fixed">
+    <li>
+      <a
+        href={routePath(FAVORITES)}
+        class:active={route.kind === "favorites"}
+        class:drop-over={drag.target === "fav" && drag.item?.kind === "bookmark"}
+        data-drop="fav"
+        onclick={(event) => navigate(FAVORITES, event)}
+      >
+        <Icon name="star" />
+        <span class="name">Favoriten</span>
+        <span class="count">{favorites}</span>
+      </a>
+    </li>
     <li>
       <a
         href={routePath(ALL)}
@@ -148,12 +174,62 @@
     </li>
   </ul>
 
-  <div class="section">
-    <span>Ordner</span>
-    <button type="button" class="icon" aria-label="Neuer Ordner" onclick={onnewfolder}>
-      <Icon name="folderPlus" />
-    </button>
-  </div>
+  {#if rootDrop}
+    <div class="section root-drop" class:drop-over={drag.target === "root"} data-drop="root">
+      <Icon name="move" />
+      <span>Hierher: oberste Ebene</span>
+    </div>
+  {:else if selecting}
+    <div class="section selectbar" role="toolbar" aria-label="Ausgewählte Ordner">
+      <span class="selected-count">{selection.count} ausgewählt</span>
+      <button
+        type="button"
+        class="icon"
+        aria-label="Zusammenführen"
+        title="Zusammenführen"
+        disabled={selection.count < 2}
+        onclick={() => onfolderbulk("merge")}
+      >
+        <Icon name="merge" />
+      </button>
+      <button
+        type="button"
+        class="icon"
+        aria-label="Verschieben"
+        title="Verschieben"
+        disabled={selection.count === 0}
+        onclick={() => onfolderbulk("move")}
+      >
+        <Icon name="move" />
+      </button>
+      <button
+        type="button"
+        class="icon danger-text"
+        aria-label="Löschen"
+        title="Löschen"
+        disabled={selection.count === 0}
+        onclick={() => onfolderbulk("delete")}
+      >
+        <Icon name="trash" />
+      </button>
+      <button
+        type="button"
+        class="icon"
+        aria-label="Auswahl beenden"
+        title="Auswahl beenden"
+        onclick={() => selection.clear()}
+      >
+        <Icon name="close" />
+      </button>
+    </div>
+  {:else}
+    <div class="section">
+      <span>Ordner</span>
+      <button type="button" class="icon" aria-label="Neuer Ordner" onclick={onnewfolder}>
+        <Icon name="folderPlus" />
+      </button>
+    </div>
+  {/if}
 
   {#if tree.children.size === 0}
     <p class="empty">Noch keine Ordner.</p>
@@ -167,7 +243,10 @@
       {collapsed}
       ontoggle={toggle}
       onnavigate={navigate}
-      onedit={oneditfolder}
+      onmenu={onfoldermenu}
+      {selecting}
+      selected={selection.ids}
+      onselect={(id) => selection.toggle(id)}
     />
   {/if}
 
@@ -262,6 +341,35 @@
 
   .section button {
     color: var(--muted);
+  }
+
+  /* Gleiche Höhe wie die Überschrift, damit beim Ziehen nichts springt. */
+  .root-drop {
+    justify-content: flex-start;
+    gap: 0.5rem;
+    min-height: 2.15rem;
+    margin-inline: 0;
+    padding-inline: 0.5rem;
+    color: var(--accent);
+    text-transform: none;
+    letter-spacing: 0;
+    border: 2px dashed currentColor;
+    border-radius: calc(var(--radius) - 4px);
+  }
+
+  .selectbar {
+    gap: 0.1rem;
+    color: var(--text);
+    text-transform: none;
+    letter-spacing: 0;
+  }
+
+  .selected-count {
+    flex: 1;
+  }
+
+  .selectbar button.danger-text {
+    color: var(--danger);
   }
 
   .empty {

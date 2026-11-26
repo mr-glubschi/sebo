@@ -19,6 +19,8 @@
     bookmark?: Bookmark;
     /** Vorauswahl für neue Bookmarks. */
     folderId?: number | null;
+    /** Neue Bookmarks gleich als Favorit (in der Favoriten-Ansicht). */
+    favorite?: boolean;
     onclose: () => void;
     /** Nach jeder Änderung, damit die Liste neu geladen wird. */
     onchanged: () => void;
@@ -31,6 +33,7 @@
     initialTitle,
     bookmark,
     folderId = null,
+    favorite: initialFavorite = false,
     onclose,
     onchanged,
   }: Props = $props();
@@ -40,12 +43,14 @@
     url: bookmark?.url ?? initialUrl ?? "",
     title: bookmark?.title ?? initialTitle ?? "",
     folder: bookmark ? bookmark.folder_id : folderId,
+    favorite: bookmark ? bookmark.favorite : initialFavorite,
     editing: bookmark !== undefined,
   }))();
 
   let url = $state(initial.url);
   let title = $state(initial.title);
   let folder = $state<number | null>(initial.folder);
+  let favorite = $state(initial.favorite);
   let titleTouched = $state(initial.editing || initial.title !== "");
   let previewing = $state(false);
   let busy = $state(false);
@@ -137,19 +142,21 @@
     event.preventDefault();
     const trimmedTitle = title.trim();
     if (!bookmark) {
-      run(() =>
-        api.createBookmark({
+      run(async () => {
+        const created = await api.createBookmark({
           url: url.trim(),
           title: trimmedTitle === "" ? undefined : trimmedTitle,
           folder_id: folder,
-        }),
-      );
+        });
+        if (favorite) await api.updateBookmark(created.id, { favorite: true });
+      });
       return;
     }
     const changes: BookmarkChanges = {};
     if (url.trim() !== bookmark.url) changes.url = url.trim();
     if (trimmedTitle !== bookmark.title) changes.title = trimmedTitle;
     if (folder !== bookmark.folder_id) changes.folder_id = folder;
+    if (favorite !== bookmark.favorite) changes.favorite = favorite;
     if (Object.keys(changes).length === 0) {
       onclose();
       return;
@@ -209,6 +216,11 @@
     </label>
 
     <FolderSelect {tree} bind:value={folder} label="Ordner" noneLabel="Unsortiert" />
+
+    <label class="checkbox">
+      <input type="checkbox" bind:checked={favorite} />
+      Favorit
+    </label>
 
     {#if error}
       <p class="error" role="alert">{error}</p>
@@ -281,6 +293,19 @@
   .with-button button {
     flex: none;
     border-color: var(--border);
+  }
+
+  .checkbox {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 1rem;
+  }
+
+  .checkbox input {
+    width: 1.15rem;
+    height: 1.15rem;
+    accent-color: var(--accent);
   }
 
   .duplicate {

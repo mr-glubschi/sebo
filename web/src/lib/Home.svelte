@@ -1,11 +1,15 @@
 <script lang="ts">
-  import { tick } from "svelte";
+  import { tick, untrack } from "svelte";
   import { api, errorText } from "./api";
   import type { Bookmark } from "./bindings/Bookmark";
   import type { Folder } from "./bindings/Folder";
   import type { Library } from "./bindings/Library";
   import BookmarkDialog from "./BookmarkDialog.svelte";
   import BookmarkView from "./BookmarkView.svelte";
+  import ConfirmDialog from "./ConfirmDialog.svelte";
+  import ContextMenu from "./ContextMenu.svelte";
+  import { menu, type MenuItem } from "./menu.svelte";
+  import DeleteFoldersDialog from "./DeleteFoldersDialog.svelte";
   import {
     drag,
     droppedLinks,
@@ -17,6 +21,7 @@
     type DroppedLink,
   } from "./drag.svelte";
   import FolderDialog from "./FolderDialog.svelte";
+  import FolderIcon from "./FolderIcon.svelte";
   import Icon, { type IconName } from "./Icon.svelte";
   import {
     buildTree,
@@ -34,7 +39,10 @@
     type SortMode,
     type ViewMode,
   } from "./library";
+  import MergeDialog from "./MergeDialog.svelte";
+  import MoveDialog from "./MoveDialog.svelte";
   import { SearchIndex, type Part } from "./search";
+  import { selection } from "./selection.svelte";
   import { readShare } from "./share";
   import Sidebar from "./Sidebar.svelte";
   import { toasts } from "./toast.svelte";
@@ -45,8 +53,13 @@
   type Dialog =
     | { kind: "add"; url?: string; title?: string }
     | { kind: "edit"; bookmark: Bookmark }
-    | { kind: "newFolder" }
-    | { kind: "editFolder"; folder: Folder };
+    | { kind: "newFolder"; parentId: number | null }
+    | { kind: "editFolder"; folder: Folder }
+    /** `bulk`: aus der Mehrfachauswahl, danach wird sie beendet. */
+    | { kind: "move"; target: "bookmark" | "folder"; ids: number[]; bulk: boolean }
+    | { kind: "deleteBookmarks"; ids: number[]; bulk: boolean }
+    | { kind: "deleteFolders"; ids: number[]; bulk: boolean }
+    | { kind: "merge"; ids: number[] };
 
   // Über „Teilen“ (Android) geöffnet: Link in den Dialog übernehmen.
   const shared = readShare();
@@ -87,6 +100,7 @@
     return result;
   });
   const unsortedCount = $derived(bookmarks.filter((b) => b.folder_id === null).length);
+  const favoritesCount = $derived(bookmarks.filter((b) => b.favorite).length);
 
   const current = $derived(route.kind === "folder" ? tree.byId.get(route.id) : undefined);
   const breadcrumbs = $derived(
@@ -95,11 +109,13 @@
   const heading = $derived(
     searching
       ? "Suche"
-      : route.kind === "all"
-        ? "Alle Bookmarks"
-        : route.kind === "unsorted"
-          ? "Unsortiert"
-          : (current?.name ?? ""),
+      : route.kind === "favorites"
+        ? "Favoriten"
+        : route.kind === "all"
+          ? "Alle Bookmarks"
+          : route.kind === "unsorted"
+            ? "Unsortiert"
+            : (current?.name ?? ""),
   );
   const subfolders = $derived(
     current && !searching ? (tree.children.get(current.id) ?? []) : [],
@@ -111,7 +127,9 @@
           bookmarks.filter((b) =>
             route.kind === "all"
               ? true
-              : route.kind === "unsorted"
+              : route.kind === "favorites"
+                ? b.favorite
+                : route.kind === "unsorted"
                 ? b.folder_id === null
                 : b.folder_id === route.id,
           ),
@@ -121,7 +139,7 @@
   const highlights = $derived(
     searching ? new Map<number, Part[]>(hits.map((hit) => [hit.bookmark.id, hit.title])) : undefined,
   );
-  const showFolders = $derived(searching || route.kind === "all");
+  const showFolders = $derived(searching || route.kind === "all" || route.kind === "favorites");
   const currentFolderId = $derived(route.kind === "folder" ? route.id : null);
 
   function folderName(id: number | null): string {
@@ -129,7 +147,10 @@
   }
 
   function targetName(target: DropTarget): string {
-    return target === null ? "Unsortiert" : folderName(target);
+    if (target === "unsorted") return "Unsortiert";
+    if (target === "root") return "oberste Ebene";
+    if (target === "favorites") return "Favoriten";
+    return folderName(target);
   }
 
   $effect(() => {
@@ -214,6 +235,11 @@
   }
 
   function keydown(event: KeyboardEvent) {
+    // Escape beendet zuerst die Auswahl (Menü und Dialoge fangen es selbst ab).
+    if (event.key === "Escape" && selection.kind && !dialog && !menu.open) {
+      selection.clear();
+      return;
+    }
     if (event.key === "Escape" && menuOpen) {
       menuOpen = false;
       // Fokus zurück auf den Menü-Knopf statt ins Leere.
@@ -261,28 +287,248 @@
     move(item, target);
   };
 
+  /** Gezogene Bookmarks: alle ausgewählten, wenn eines davon gezogen wird. */
+  function draggedIds(item: DragItem): number[] {
+    return selection.is("bookmark") && selection.ids.has(item.id) ? [...selection.ids] : [item.id];
+  }
+
   async function move(item: DragItem, target: DropTarget) {
     try {
       if (item.kind === "bookmark") {
-        const bookmark = bookmarks.find((b) => b.id === item.id);
-        if (!bookmark || bookmark.folder_id === target) return;
-        await api.updateBookmark(item.id, { folder_id: target });
-        toasts.show(`„${item.label}“ → ${targetName(target)}`);
+        if (target === "root") return;
+        const ids = draggedIds(item);
+        if (target === "favorites") {
+          await setFavorite(ids, true);
+          return;
+        }
+        const label = ids.length === 1 ? `„${item.label}“` : `${ids.length} Bookmarks`;
+        const folderId = target === "unsorted" ? null : target;
+        if (ids.length === 1) {
+          const bookmark = bookmarks.find((b) => b.id === item.id);
+          if (!bookmark || bookmark.folder_id === folderId) return;
+          await api.updateBookmark(item.id, { folder_id: folderId });
+        } else {
+          await api.bulkBookmarks(ids, { action: "move", folder_id: folderId });
+          selection.clear();
+        }
+        toasts.show(`${label} → ${targetName(target)}`);
       } else {
+        if (target === "favorites") return;
+        // Unsortiert und „oberste Ebene“ bedeuten für Ordner dasselbe.
+        const parent = typeof target === "number" ? target : null;
         const folder = tree.byId.get(item.id);
         // Auf sich selbst oder an die alte Stelle gezogen: nichts zu tun.
-        if (!folder || folder.parent_id === target || target === item.id) return;
-        if (target !== null && subtree(tree, item.id).has(target)) {
+        if (!folder || folder.parent_id === parent || parent === item.id) return;
+        if (parent !== null && subtree(tree, item.id).has(parent)) {
           toasts.show("Ein Ordner kann nicht in sich selbst liegen.", true);
           return;
         }
-        await api.updateFolder(item.id, { parent_id: target });
-        toasts.show(`Ordner „${item.label}“ → ${target === null ? "oberste Ebene" : folderName(target)}`);
+        await api.updateFolder(item.id, { parent_id: parent });
+        toasts.show(
+          `Ordner „${item.label}“ → ${parent === null ? "oberste Ebene" : folderName(parent)}`,
+        );
       }
     } catch (e) {
       toasts.show(errorText(e), true);
     }
     await reload();
+  }
+
+  // ---- Favoriten, Kontextmenüs, Mehrfachauswahl ----
+
+  async function setFavorite(ids: number[], favorite: boolean) {
+    try {
+      const [only] = ids;
+      if (ids.length === 1 && only !== undefined) await api.updateBookmark(only, { favorite });
+      else await api.bulkBookmarks(ids, { action: favorite ? "favorite" : "unfavorite" });
+      const what = ids.length === 1 ? "Bookmark" : `${ids.length} Bookmarks`;
+      toasts.show(favorite ? `${what} als Favorit markiert` : `${what} aus Favoriten entfernt`);
+    } catch (e) {
+      toasts.show(errorText(e), true);
+    }
+    await reload();
+  }
+
+  // Zwischenablage gibt es nur über HTTPS oder localhost.
+  const canCopy = typeof navigator.clipboard?.writeText === "function";
+
+  async function copyLink(url: string) {
+    try {
+      await navigator.clipboard.writeText(url);
+      toasts.show("Link kopiert");
+    } catch {
+      toasts.show("Kein Zugriff auf die Zwischenablage.", true);
+    }
+  }
+
+  function bookmarkMenu(bookmark: Bookmark, event: MouseEvent, trigger?: HTMLElement) {
+    const items: MenuItem[] = [
+      {
+        label: "In neuem Tab öffnen",
+        icon: "external",
+        // URL ist vom Server geprüft (nur http/https).
+        action: () => window.open(bookmark.url, "_blank", "noopener,noreferrer"),
+      },
+      { label: "Bearbeiten", icon: "edit", action: () => (dialog = { kind: "edit", bookmark }) },
+      {
+        label: bookmark.favorite ? "Favorit entfernen" : "Als Favorit",
+        icon: "star",
+        filled: bookmark.favorite,
+        action: () => setFavorite([bookmark.id], !bookmark.favorite),
+      },
+      {
+        label: "Verschieben nach …",
+        icon: "move",
+        action: () =>
+          (dialog = { kind: "move", target: "bookmark", ids: [bookmark.id], bulk: false }),
+      },
+    ];
+    if (canCopy) {
+      items.push({ label: "Link kopieren", icon: "copy", action: () => copyLink(bookmark.url) });
+    }
+    if (!selection.is("bookmark")) {
+      items.push({
+        label: "Auswählen",
+        icon: "select",
+        action: () => selection.start("bookmark", bookmark.id),
+      });
+    }
+    items.push({
+      label: "Löschen",
+      icon: "trash",
+      danger: true,
+      action: () => (dialog = { kind: "deleteBookmarks", ids: [bookmark.id], bulk: false }),
+    });
+    menu.show(event, items, trigger);
+  }
+
+  function folderMenu(folder: Folder, event: MouseEvent, trigger?: HTMLElement) {
+    const items: MenuItem[] = [];
+    if (!(route.kind === "folder" && route.id === folder.id)) {
+      items.push({
+        label: "Öffnen",
+        icon: "folder",
+        action: () => navigate({ kind: "folder", id: folder.id }),
+      });
+    }
+    items.push(
+      {
+        label: "Neuer Unterordner",
+        icon: "folderPlus",
+        action: () => (dialog = { kind: "newFolder", parentId: folder.id }),
+      },
+      { label: "Bearbeiten", icon: "edit", action: () => (dialog = { kind: "editFolder", folder }) },
+      {
+        label: "Verschieben nach …",
+        icon: "move",
+        action: () => (dialog = { kind: "move", target: "folder", ids: [folder.id], bulk: false }),
+      },
+    );
+    if (!selection.is("folder")) {
+      items.push({
+        label: "Auswählen",
+        icon: "select",
+        action: () => {
+          selection.start("folder", folder.id);
+          // Am Handy liegen die Ordner im Menü: offen lassen bzw. öffnen.
+          if (matchMedia("(max-width: 800px)").matches) menuOpen = true;
+        },
+      });
+    }
+    items.push({
+      label: "Löschen",
+      icon: "trash",
+      danger: true,
+      action: () => (dialog = { kind: "deleteFolders", ids: [folder.id], bulk: false }),
+    });
+    menu.show(event, items, trigger);
+  }
+
+  function folderBulk(action: "merge" | "move" | "delete") {
+    const ids = [...selection.ids];
+    if (ids.length === 0) return;
+    if (action === "merge") dialog = { kind: "merge", ids };
+    else if (action === "move") dialog = { kind: "move", target: "folder", ids, bulk: true };
+    else dialog = { kind: "deleteFolders", ids, bulk: true };
+  }
+
+  /** Klick im Auswahlmodus; mit Umschalt der ganze Bereich seit dem letzten Klick. */
+  function selectBookmark(bookmark: Bookmark, event: MouseEvent) {
+    const anchor = selection.anchor;
+    if (event.shiftKey && anchor !== null) {
+      const from = visible.findIndex((b) => b.id === anchor);
+      const to = visible.findIndex((b) => b.id === bookmark.id);
+      if (from >= 0 && to >= 0) {
+        const [first, last] = from < to ? [from, to] : [to, from];
+        selection.add(visible.slice(first, last + 1).map((b) => b.id));
+        selection.anchor = bookmark.id;
+        return;
+      }
+    }
+    selection.toggle(bookmark.id);
+  }
+
+  const selectingBookmarks = $derived(selection.is("bookmark"));
+  const selectedBookmarks = $derived(
+    selectingBookmarks ? bookmarks.filter((b) => selection.ids.has(b.id)) : [],
+  );
+  const allSelected = $derived(
+    visible.length > 0 && visible.every((b) => selection.ids.has(b.id)),
+  );
+  const allFavorite = $derived(
+    selectedBookmarks.length > 0 && selectedBookmarks.every((b) => b.favorite),
+  );
+
+  // Ordner, Suche oder Sortierung gewechselt: Auswahl der Bookmarks beenden.
+  $effect(() => {
+    void routePath(route);
+    void query;
+    untrack(() => {
+      if (selection.is("bookmark")) selection.clear();
+    });
+  });
+
+  // Nach dem Neuladen: nicht mehr vorhandene Einträge aus der Auswahl nehmen.
+  $effect(() => {
+    if (!library) return;
+    const ids = new Set(
+      selection.kind === "folder"
+        ? library.folders.map((f) => f.id)
+        : library.bookmarks.map((b) => b.id),
+    );
+    untrack(() => selection.keep((id) => ids.has(id)));
+  });
+
+  // Unten liegt die Aktionsleiste: Hinweise darüber anzeigen.
+  $effect(() => {
+    document.documentElement.classList.toggle("has-selectbar", selectingBookmarks);
+  });
+
+  async function deleteBookmarks(ids: number[], bulk: boolean): Promise<boolean> {
+    try {
+      const [only] = ids;
+      if (ids.length === 1 && only !== undefined) await api.deleteBookmark(only);
+      else await api.bulkBookmarks(ids, { action: "delete" });
+      toasts.show(ids.length === 1 ? "Bookmark gelöscht" : `${ids.length} Bookmarks gelöscht`);
+      if (bulk) selection.clear();
+      await reload();
+      return true;
+    } catch (e) {
+      toasts.show(errorText(e), true);
+      await reload();
+      return false;
+    }
+  }
+
+  function afterDialog(bulk: boolean) {
+    if (bulk) selection.clear();
+    reload();
+  }
+
+  function deleteMessage(ids: number[]): string {
+    if (ids.length > 1) return `${ids.length} Bookmarks werden gelöscht.`;
+    const bookmark = bookmarks.find((b) => b.id === ids[0]);
+    return `„${bookmark?.title ?? "Bookmark"}“ wird gelöscht.`;
   }
 
   // ---- Links von außen hineinziehen ----
@@ -309,17 +555,24 @@
     if (!external || !event.dataTransfer) return;
     event.preventDefault();
     clearTimeout(externalTimer);
-    const target = parseTarget(drag.target);
+    const target = externalTarget(drag.target);
     endExternal();
     const links = droppedLinks(event.dataTransfer);
     if (links.length === 0) {
       toasts.show("Kein Link gefunden. Nur http- und https-Adressen.", true);
       return;
     }
-    saveLinks(links, target === undefined ? currentFolderId : target);
+    saveLinks(links, target);
   }
 
-  async function saveLinks(links: DroppedLink[], folder: DropTarget) {
+  /** Ordner für Links von außen; ohne passendes Ziel der aktuelle Ordner. */
+  function externalTarget(value: string | null): number | null {
+    const target = parseTarget(value);
+    if (typeof target === "number") return target;
+    return target === "unsorted" ? null : currentFolderId;
+  }
+
+  async function saveLinks(links: DroppedLink[], folder: number | null) {
     const existing = new Set(bookmarks.map((b) => b.url));
     let saved = 0;
     let duplicates = 0;
@@ -340,7 +593,7 @@
     const parts = [];
     if (saved > 0) {
       parts.push(
-        `${saved === 1 ? "Bookmark" : `${saved} Bookmarks`} gespeichert in ${targetName(folder)}`,
+        `${saved === 1 ? "Bookmark" : `${saved} Bookmarks`} gespeichert in ${folderName(folder)}`,
       );
     }
     if (duplicates > 0) parts.push(`${duplicates} schon vorhanden`);
@@ -397,9 +650,11 @@
       {counts}
       total={bookmarks.length}
       unsorted={unsortedCount}
+      favorites={favoritesCount}
       onnavigate={(target) => navigate(target)}
-      onnewfolder={() => (dialog = { kind: "newFolder" })}
-      oneditfolder={(folder) => (dialog = { kind: "editFolder", folder })}
+      onnewfolder={() => (dialog = { kind: "newFolder", parentId: currentFolderId })}
+      onfoldermenu={folderMenu}
+      onfolderbulk={folderBulk}
       {onlogout}
       onimported={reload}
     />
@@ -446,10 +701,11 @@
         <button
           type="button"
           class="icon"
-          aria-label="Ordner bearbeiten"
-          onclick={() => current && (dialog = { kind: "editFolder", folder: current })}
+          aria-label="Aktionen für diesen Ordner"
+          aria-haspopup="menu"
+          onclick={(event) => current && folderMenu(current, event, event.currentTarget)}
         >
-          <Icon name="edit" />
+          <Icon name="more" />
         </button>
       {/if}
 
@@ -507,7 +763,7 @@
       </div>
     </header>
 
-    <main id="inhalt" tabindex="-1">
+    <main id="inhalt" tabindex="-1" class:selecting={selectingBookmarks}>
       {#if loadError}
         <div class="notice" role="alert">
           <span>{loadError}</span>
@@ -531,8 +787,9 @@
                 data-drop={String(folder.id)}
                 class:drop-over={drag.target === String(folder.id)}
                 onclick={(event) => linkClick(target, event)}
+                oncontextmenu={(event) => folderMenu(folder, event)}
               >
-                <Icon name="folder" />
+                <FolderIcon name={folder.icon} />
                 <span>{folder.name}</span>
               </a>
             </li>
@@ -546,6 +803,18 @@
         <div class="empty">
           {#if searching}
             <p>Keine Treffer für „{query.trim()}“.</p>
+          {:else if route.kind === "favorites"}
+            <p>Noch keine Favoriten.</p>
+            <p class="hint">
+              Über ⋯ oder Rechtsklick „Als Favorit“ wählen oder ein Bookmark auf „Favoriten“ ziehen.
+            </p>
+            <a
+              class="button"
+              href={routePath({ kind: "all" })}
+              onclick={(event) => linkClick({ kind: "all" }, event)}
+            >
+              Alle Bookmarks
+            </a>
           {:else}
             <p>{route.kind === "all" ? "Noch keine Bookmarks." : "Hier sind keine Bookmarks."}</p>
             <p class="hint">Ziehe einen Link hierher oder füge ihn hinzu.</p>
@@ -560,30 +829,92 @@
           {view}
           {highlights}
           folderName={showFolders ? folderName : undefined}
-          onedit={(bookmark) => (dialog = { kind: "edit", bookmark })}
           resetKey={`${routePath(route)}|${query}|${sort}`}
+          selecting={selectingBookmarks}
+          selected={selection.ids}
+          onselect={selectBookmark}
+          onmenu={bookmarkMenu}
         />
       {/if}
     </main>
   </div>
 </div>
 
+{#if selectingBookmarks}
+  {@const count = selection.count}
+  <div class="selectbar" role="toolbar" aria-label="Ausgewählte Bookmarks">
+    <span class="selected-count" aria-live="polite">{count} ausgewählt</span>
+    <button
+      type="button"
+      class="secondary"
+      onclick={() => selection.set(allSelected ? [] : visible.map((b) => b.id))}
+    >
+      {allSelected ? "Keine" : "Alle"}
+    </button>
+    <button
+      type="button"
+      class="icon"
+      aria-label={allFavorite ? "Aus Favoriten entfernen" : "Als Favorit"}
+      title={allFavorite ? "Aus Favoriten entfernen" : "Als Favorit"}
+      disabled={count === 0}
+      onclick={() => setFavorite([...selection.ids], !allFavorite)}
+    >
+      <Icon name="star" filled={allFavorite} />
+    </button>
+    <button
+      type="button"
+      class="icon"
+      aria-label="Verschieben"
+      title="Verschieben"
+      disabled={count === 0}
+      onclick={() =>
+        (dialog = { kind: "move", target: "bookmark", ids: [...selection.ids], bulk: true })}
+    >
+      <Icon name="move" />
+    </button>
+    <button
+      type="button"
+      class="icon danger-text"
+      aria-label="Löschen"
+      title="Löschen"
+      disabled={count === 0}
+      onclick={() => (dialog = { kind: "deleteBookmarks", ids: [...selection.ids], bulk: true })}
+    >
+      <Icon name="trash" />
+    </button>
+    <button
+      type="button"
+      class="icon"
+      aria-label="Auswahl beenden"
+      title="Auswahl beenden (Esc)"
+      onclick={() => selection.clear()}
+    >
+      <Icon name="close" />
+    </button>
+  </div>
+{/if}
+
 {#if drag.item}
+  {@const ids = drag.item.kind === "bookmark" ? draggedIds(drag.item) : []}
   <div class="ghost" style:transform="translate({drag.x + 14}px, {drag.y + 14}px)">
-    <Icon name={drag.item.kind === "folder" ? "folder" : "all"} />
-    <span>{drag.item.label}</span>
+    {#if drag.item.kind === "folder"}
+      <FolderIcon name={drag.item.icon} />
+    {:else}
+      <Icon name="all" />
+    {/if}
+    <span>{ids.length > 1 ? `${ids.length} Bookmarks` : drag.item.label}</span>
   </div>
 {/if}
 
 {#if external}
-  {@const target = parseTarget(drag.target)}
   <div class="drop-hint" aria-hidden="true">
     Loslassen zum Speichern in
-    <strong>{targetName(target === undefined ? currentFolderId : target)}</strong>
+    <strong>{folderName(externalTarget(drag.target))}</strong>
   </div>
 {/if}
 
 <Toasts />
+<ContextMenu />
 
 {#if dialog?.kind === "add"}
   <BookmarkDialog
@@ -592,6 +923,7 @@
     folderId={currentFolderId}
     initialUrl={dialog.url}
     initialTitle={dialog.title}
+    favorite={route.kind === "favorites"}
     onclose={() => (dialog = null)}
     onchanged={reload}
   />
@@ -607,7 +939,7 @@
   <FolderDialog
     {tree}
     {bookmarks}
-    parentId={currentFolderId}
+    parentId={dialog.parentId}
     onclose={() => (dialog = null)}
     onchanged={reload}
     ondeleted={folderDeleted}
@@ -620,6 +952,50 @@
     onclose={() => (dialog = null)}
     onchanged={reload}
     ondeleted={folderDeleted}
+  />
+{:else if dialog?.kind === "move"}
+  {@const bulk = dialog.bulk}
+  <MoveDialog
+    {tree}
+    {bookmarks}
+    kind={dialog.target}
+    ids={dialog.ids}
+    onclose={() => (dialog = null)}
+    onchanged={() => afterDialog(bulk)}
+  />
+{:else if dialog?.kind === "deleteBookmarks"}
+  {@const { ids, bulk } = dialog}
+  <ConfirmDialog
+    title={ids.length === 1 ? "Bookmark löschen" : `${ids.length} Bookmarks löschen`}
+    message={deleteMessage(ids)}
+    confirmLabel="Löschen"
+    onconfirm={() => deleteBookmarks(ids, bulk)}
+    onclose={() => (dialog = null)}
+  />
+{:else if dialog?.kind === "deleteFolders"}
+  {@const bulk = dialog.bulk}
+  <DeleteFoldersDialog
+    {tree}
+    {bookmarks}
+    ids={dialog.ids}
+    onclose={() => (dialog = null)}
+    onchanged={() => afterDialog(bulk)}
+    ondeleted={(ids) => {
+      const folder = ids.length === 1 ? tree.byId.get(ids[0] ?? -1) : undefined;
+      if (folder) folderDeleted(folder);
+    }}
+  />
+{:else if dialog?.kind === "merge"}
+  <MergeDialog
+    {tree}
+    ids={dialog.ids}
+    onclose={() => (dialog = null)}
+    onchanged={() => afterDialog(true)}
+    onmerged={(target, sources) => {
+      if (route.kind === "folder" && sources.includes(route.id)) {
+        navigate({ kind: "folder", id: target }, true);
+      }
+    }}
   />
 {/if}
 
@@ -854,6 +1230,51 @@
     margin-top: 15vh;
     text-align: center;
     color: var(--muted);
+  }
+
+  /* Platz für die Aktionsleiste, damit die letzten Einträge erreichbar bleiben */
+  main.selecting {
+    padding-bottom: 7rem;
+  }
+
+  .selectbar {
+    position: fixed;
+    left: 50%;
+    bottom: calc(1rem + env(safe-area-inset-bottom));
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    width: max-content;
+    max-width: calc(100% - 2rem);
+    padding: 0.4rem 0.4rem 0.4rem 1rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    box-shadow: 0 6px 24px rgb(0 0 0 / 0.22);
+    transform: translateX(-50%);
+  }
+
+  .selected-count {
+    margin-right: 0.5rem;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .selectbar .secondary {
+    padding: 0.35rem 0.8rem;
+    border-radius: 999px;
+  }
+
+  .selectbar .danger-text {
+    color: var(--danger);
+  }
+
+  /* Breite Seitenleiste: Leiste über dem Inhalt mittig */
+  @media (min-width: 801px) {
+    .selectbar {
+      left: calc(50% + 8.25rem);
+    }
   }
 
   /* Handy und schmale Fenster: Seitenleiste als ausklappbares Menü. */

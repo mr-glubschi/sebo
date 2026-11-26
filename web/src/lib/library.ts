@@ -3,19 +3,27 @@
 import type { Bookmark } from "./bindings/Bookmark";
 import type { Folder } from "./bindings/Folder";
 
-export type Route = { kind: "all" } | { kind: "unsorted" } | { kind: "folder"; id: number };
+export type Route =
+  | { kind: "favorites" }
+  | { kind: "all" }
+  | { kind: "unsorted" }
+  | { kind: "folder"; id: number };
 
+/** Unbekannte Adressen führen zur Startseite (Favoriten). */
 export function parseRoute(path: string): Route {
+  if (path === "/alle") return { kind: "all" };
   if (path === "/unsortiert") return { kind: "unsorted" };
   const match = /^\/f\/(\d{1,15})$/.exec(path);
   if (match) return { kind: "folder", id: Number(match[1]) };
-  return { kind: "all" };
+  return { kind: "favorites" };
 }
 
 export function routePath(route: Route): string {
   switch (route.kind) {
-    case "all":
+    case "favorites":
       return "/";
+    case "all":
+      return "/alle";
     case "unsorted":
       return "/unsortiert";
     case "folder":

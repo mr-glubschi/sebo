@@ -4,14 +4,15 @@ import { findUrls, normalizeUrl } from "./links";
 //
 // Maus: Ziehen beginnt nach ein paar Pixeln Bewegung.
 // Touch: Ziehen beginnt nach langem Drücken; kurzes Wischen scrollt normal.
-// Ablageziele sind Elemente mit `data-drop` ("none" = Unsortiert, sonst Ordner-ID).
+// Ablageziele sind Elemente mit `data-drop`: Ordner-ID, "none" (Unsortiert),
+// "root" (oberste Ebene, nur für Ordner) oder "fav" (Favoriten, nur für Bookmarks).
 
 export type DragItem =
   | { kind: "bookmark"; id: number; label: string }
-  | { kind: "folder"; id: number; label: string };
+  | { kind: "folder"; id: number; label: string; icon: string | null };
 
-/** Ablageziel: Ordner-ID oder `null` für „Unsortiert“. */
-export type DropTarget = number | null;
+/** Ablageziel: Ordner-ID oder eines der festen Ziele. */
+export type DropTarget = number | "unsorted" | "root" | "favorites";
 
 const LONG_PRESS_MS = 450;
 const MOUSE_THRESHOLD = 6;
@@ -35,7 +36,9 @@ export const drag = new DragState();
 
 export function parseTarget(value: string | null | undefined): DropTarget | undefined {
   if (value === undefined || value === null) return undefined;
-  if (value === "none") return null;
+  if (value === "none") return "unsorted";
+  if (value === "root") return "root";
+  if (value === "fav") return "favorites";
   const id = Number(value);
   return Number.isInteger(id) && id > 0 ? id : undefined;
 }

@@ -90,12 +90,21 @@ export interface BookmarkChanges {
   /** Leer = Titel wieder automatisch von der Seite übernehmen. */
   title?: string;
   folder_id?: number | null;
+  favorite?: boolean;
 }
 
 export interface FolderChanges {
   name?: string;
   parent_id?: number | null;
+  /** `null` = Standard-Symbol. */
+  icon?: string | null;
 }
+
+export type BulkAction =
+  | { action: "move"; folder_id: number | null }
+  | { action: "delete" }
+  | { action: "favorite" }
+  | { action: "unfavorite" };
 
 /** `move`: Inhalt in den übergeordneten Ordner, `delete`: mitlöschen. */
 export type DeleteContents = "move" | "delete";
@@ -114,11 +123,17 @@ export const api = {
     request<Folder>("PATCH", `/folders/${id}`, changes),
   deleteFolder: (id: number, contents: DeleteContents) =>
     request<void>("DELETE", `/folders/${id}?contents=${contents}`),
+  deleteFolders: (ids: number[], contents: DeleteContents) =>
+    request<void>("POST", "/folders/bulk-delete", { ids, contents }),
+  mergeFolders: (target: number, sources: number[]) =>
+    request<Folder>("POST", "/folders/merge", { target, sources }),
 
   createBookmark: (bookmark: NewBookmark) => request<Bookmark>("POST", "/bookmarks", bookmark),
   updateBookmark: (id: number, changes: BookmarkChanges) =>
     request<Bookmark>("PATCH", `/bookmarks/${id}`, changes),
   deleteBookmark: (id: number) => request<void>("DELETE", `/bookmarks/${id}`),
+  bulkBookmarks: (ids: number[], action: BulkAction) =>
+    request<{ changed: number }>("POST", "/bookmarks/bulk", { ids, ...action }),
   refreshBookmark: (id: number) => request<Bookmark>("POST", `/bookmarks/${id}/refresh`),
   removeImage: (id: number) => request<Bookmark>("DELETE", `/bookmarks/${id}/image`),
   preview: (url: string) => request<Preview>("POST", "/preview", { url }),

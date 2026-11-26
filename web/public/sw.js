@@ -1,7 +1,7 @@
 // Service Worker von SEBO: hält nur die App-Hülle (Skripte, Stile, Icons) vor.
 // API-Antworten und Bookmark-Bilder werden nie zwischengespeichert, es gibt keinen Offline-Modus.
 
-const CACHE = "sebo-shell-v2";
+const CACHE = "sebo-shell-v3";
 // Nach Updates liegen alte Dateien im Cache: nur die neuesten behalten.
 const MAX_ENTRIES = 30;
 

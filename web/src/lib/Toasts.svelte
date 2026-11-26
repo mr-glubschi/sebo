@@ -23,6 +23,11 @@
     pointer-events: none;
   }
 
+  /* Über der Aktionsleiste der Mehrfachauswahl */
+  :global(html.has-selectbar) .toasts {
+    bottom: calc(5rem + env(safe-area-inset-bottom));
+  }
+
   .toast {
     pointer-events: auto;
     padding: 0.65rem 1rem;
