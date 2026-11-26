@@ -55,13 +55,15 @@ fn serve() -> ExitCode {
     };
     init_tracing(&config.log_level);
 
-    let password = match PasswordCheck::from_env_values(env("PASSWORD"), env("PASSWORD_HASH")) {
+    let plain = env("PASSWORD");
+    let hash = env("PASSWORD_HASH");
+    let password = match PasswordCheck::from_env_values(plain.clone(), hash.clone()) {
         Ok(password) => password,
         Err(message) => return fail(message),
     };
 
     // Datenbank vorbereiten (synchron, vor dem Start des Servers).
-    let conn = match db::prepare(&config.data_dir) {
+    let mut conn = match db::prepare(&config.data_dir) {
         Ok(conn) => conn,
         Err(message) => return fail(message),
     };
@@ -70,6 +72,14 @@ fn serve() -> ExitCode {
         Ok(None) => tracing::info!("Zwei-Faktor-Authentifizierung ist eingerichtet"),
         Err(message) => return fail(message),
     }
+    match password::sync_sessions(&mut conn, plain.as_deref(), hash.as_deref()) {
+        Ok(password::PasswordSync::Changed) => {
+            tracing::warn!("Passwort geändert, alle Sitzungen abgemeldet");
+        }
+        Ok(_) => {}
+        Err(message) => return fail(message),
+    }
+    drop((plain, hash));
     if let Err(error) = session::purge_expired(&conn) {
         return fail(format!(
             "Abgelaufene Sitzungen konnten nicht gelöscht werden: {error}"

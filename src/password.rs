@@ -58,6 +58,71 @@ impl PasswordCheck {
     }
 }
 
+/// Fingerabdruck des eingestellten Passworts in `settings`. So lässt sich beim
+/// Start erkennen, ob es geändert wurde.
+const KEY_FINGERPRINT: &str = "password_fingerprint";
+
+#[derive(Debug, PartialEq)]
+pub enum PasswordSync {
+    /// Erster Start mit dieser Funktion: Fingerabdruck gespeichert, niemand abgemeldet.
+    Recorded,
+    Unchanged,
+    /// Passwort geändert: alle Sitzungen gelöscht.
+    Changed,
+}
+
+/// Vergleicht das eingestellte Passwort mit dem beim letzten Start und meldet
+/// bei einer Änderung alle Sitzungen ab. Erwartet die bereits über
+/// `from_env_values` geprüften Werte.
+///
+/// Bei `PASSWORD` wird ein argon2-Hash gespeichert, kein schneller SHA-256:
+/// Aus einer entwendeten Datenbank soll sich das Passwort nicht leicht
+/// ermitteln lassen. `PASSWORD_HASH` steht ohnehin in der Umgebung, dort
+/// reicht SHA-256 des Hashes. Ein Wechsel zwischen beiden gilt als Änderung.
+pub fn sync_sessions(
+    conn: &mut rusqlite::Connection,
+    plain: Option<&str>,
+    hash_value: Option<&str>,
+) -> Result<PasswordSync, String> {
+    let db_error = |error: rusqlite::Error| format!("Datenbankfehler: {error}");
+    let stored = crate::db::get_setting(conn, KEY_FINGERPRINT).map_err(db_error)?;
+
+    let unchanged = match (&stored, plain, hash_value) {
+        (Some(stored), Some(plain), _) => stored
+            .strip_prefix("plain:")
+            .is_some_and(|stored| PasswordCheck::Argon2(stored.to_string()).verify(plain)),
+        (Some(stored), None, Some(hash_value)) => *stored == hash_fingerprint(hash_value),
+        _ => false,
+    };
+    if unchanged {
+        return Ok(PasswordSync::Unchanged);
+    }
+
+    let fingerprint = match (plain, hash_value) {
+        (Some(plain), _) => format!("plain:{}", hash(plain)?),
+        (None, Some(hash_value)) => hash_fingerprint(hash_value),
+        (None, None) => return Err("Kein Passwort gesetzt".into()),
+    };
+    let tx = conn.transaction().map_err(db_error)?;
+    if stored.is_some() {
+        tx.execute("DELETE FROM sessions", []).map_err(db_error)?;
+    }
+    crate::db::set_setting(&tx, KEY_FINGERPRINT, &fingerprint).map_err(db_error)?;
+    tx.commit().map_err(db_error)?;
+    Ok(if stored.is_some() {
+        PasswordSync::Changed
+    } else {
+        PasswordSync::Recorded
+    })
+}
+
+fn hash_fingerprint(hash_value: &str) -> String {
+    format!(
+        "hash:{}",
+        crate::crypto::sha256_hex(hash_value.trim().as_bytes())
+    )
+}
+
 pub fn hash(password: &str) -> Result<String, String> {
     let hash: PasswordHash = Argon2::default()
         .hash_password(password.as_bytes())
@@ -118,6 +183,69 @@ mod tests {
         assert!(PasswordCheck::from_env_values(Some("a".repeat(12)), Some("x".into())).is_err());
         assert!(PasswordCheck::from_env_values(None, None).is_err());
         assert!(PasswordCheck::from_env_values(None, Some("kein-hash".into())).is_err());
+    }
+
+    #[test]
+    fn passwortwechsel_meldet_ab() {
+        let mut conn = crate::db::open_test();
+        let sessions = |conn: &rusqlite::Connection| -> i64 {
+            conn.query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))
+                .unwrap()
+        };
+        let login = |conn: &rusqlite::Connection| {
+            crate::session::create(conn).unwrap();
+        };
+
+        // Erster Start: nur merken, niemand abmelden.
+        login(&conn);
+        let first = Some("erstes-langes-passwort");
+        assert_eq!(
+            sync_sessions(&mut conn, first, None),
+            Ok(PasswordSync::Recorded)
+        );
+        assert_eq!(sessions(&conn), 1);
+        // Kein Klartext und kein schneller Hash in der Datenbank.
+        let stored = crate::db::get_setting(&conn, KEY_FINGERPRINT)
+            .unwrap()
+            .unwrap();
+        assert!(stored.starts_with("plain:$argon2"));
+        assert!(!stored.contains("erstes"));
+
+        // Gleiches Passwort: bleibt angemeldet.
+        assert_eq!(
+            sync_sessions(&mut conn, first, None),
+            Ok(PasswordSync::Unchanged)
+        );
+        assert_eq!(sessions(&conn), 1);
+
+        // Anderes Passwort: alle abgemeldet.
+        let second = Some("zweites-langes-passwort");
+        assert_eq!(
+            sync_sessions(&mut conn, second, None),
+            Ok(PasswordSync::Changed)
+        );
+        assert_eq!(sessions(&conn), 0);
+
+        // Wechsel auf PASSWORD_HASH (auch mit gleichem Passwort) gilt als Änderung.
+        login(&conn);
+        let hashed = hash("zweites-langes-passwort").unwrap();
+        assert_eq!(
+            sync_sessions(&mut conn, None, Some(&hashed)),
+            Ok(PasswordSync::Changed)
+        );
+        assert_eq!(sessions(&conn), 0);
+        login(&conn);
+        assert_eq!(
+            sync_sessions(&mut conn, None, Some(&format!(" {hashed}\n"))),
+            Ok(PasswordSync::Unchanged)
+        );
+        assert_eq!(sessions(&conn), 1);
+        let other = hash("drittes-langes-passwort").unwrap();
+        assert_eq!(
+            sync_sessions(&mut conn, None, Some(&other)),
+            Ok(PasswordSync::Changed)
+        );
+        assert_eq!(sessions(&conn), 0);
     }
 
     #[test]
