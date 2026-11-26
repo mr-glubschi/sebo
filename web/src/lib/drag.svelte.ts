@@ -282,7 +282,6 @@ export function droppedLinks(data: DataTransfer): DroppedLink[] {
   return result;
 }
 
-
 // Text des ersten Links. DOMParser führt nichts aus; das Ergebnis wird nur als Text verwendet.
 function titleFromHtml(html: string): string | undefined {
   if (!html) return undefined;

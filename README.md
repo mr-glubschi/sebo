@@ -2,7 +2,7 @@
 
 **S**elf-hosted **Bo**okmarks
 
-Eine schlanke, selbst gehostete Bookmark-Verwaltung für Unraid. Bookmarks erscheinen als Karten mit Vorschaubild, sind in Ordnern organisiert und lassen sich per Drag & Drop speichern. Nicht mehr und nicht weniger.
+Eine schlanke, selbst gehostete Bookmark-Verwaltung für Unraid. Bookmarks erscheinen als Karten mit Vorschaubild, sind in Ordnern organisiert, lassen sich als Favorit markieren und per Drag & Drop speichern. Nicht mehr und nicht weniger.
 
 ## Funktionen
 
@@ -13,9 +13,9 @@ Eine schlanke, selbst gehostete Bookmark-Verwaltung für Unraid. Bookmarks ersch
 - **Drei Ansichten**: Karten, Liste und Kompakt, sortiert nach Name oder Datum. Ansicht und Sortierung merkt sich der Browser.
 - **Favoriten**: Bookmarks als Favorit markieren. Die Favoriten sind die Startseite; „Alle Bookmarks“ liegt unter `/alle`.
 - **Nach Ordnern gruppiert**: Ein Knopf neben der Ansichtswahl zeigt alle Bookmarks in Abschnitten pro Ordner, in der Reihenfolge der Seitenleiste und mit Unsortiert am Ende. In einem Ordner kommen so auch alle Unterordner mit. Funktioniert auch mit Suche und Favoriten.
-- **Ordner und Unterordner**: beliebig tief, jeweils mit eigenem Symbol und eigener Farbe. Die Reihenfolge bestimmst du selbst: Ordner an den oberen oder unteren Rand eines anderen Ordners ziehen, neue Ordner kommen ans Ende. Bookmarks und Ordner mit der Maus auf einen Ordner ziehen, am Handy lange drücken und ziehen, oder über „Verschieben nach …“. Ein Unterordner kommt auf die oberste Ebene, indem man ihn auf „Hierher: oberste Ebene“ über dem Ordnerbaum zieht.
+- **Ordner und Unterordner**: bis zu 32 Ebenen tief, jeweils mit eigenem Symbol und eigener Farbe. Die Reihenfolge bestimmst du selbst: Ordner an den oberen oder unteren Rand eines anderen Ordners ziehen, neue Ordner kommen ans Ende. Bookmarks und Ordner mit der Maus auf einen Ordner ziehen, am Handy lange drücken und ziehen, oder über „Verschieben nach …“. Ein Unterordner kommt auf die oberste Ebene, indem man ihn auf „Hierher: oberste Ebene“ über dem Ordnerbaum zieht.
 - **Kontextmenü**: Rechtsklick (oder der ⋯-Knopf, am Handy) auf ein Bookmark oder einen Ordner bietet die wichtigsten Aktionen: öffnen, bearbeiten, als Favorit markieren, verschieben, Link kopieren, löschen.
-- **Mehrfachauswahl**: Im Kontextmenü „Auswählen“ wählen, dann weitere Einträge antippen (Umschalt-Klick wählt einen Bereich). Ausgewählte Bookmarks lassen sich gemeinsam verschieben, als Favorit markieren oder löschen, ausgewählte Ordner gemeinsam verschieben, löschen oder zusammenführen.
+- **Mehrfachauswahl**: Mit der Maus den Kreis anklicken, der beim Überfahren eines Bookmarks oben links erscheint, oder im Kontextmenü „Auswählen“ wählen. Dann weitere Einträge anklicken bzw. antippen (Umschalt-Klick wählt einen Bereich). Ausgewählte Bookmarks lassen sich gemeinsam verschieben, als Favorit markieren oder löschen, ausgewählte Ordner gemeinsam verschieben, löschen oder zusammenführen.
 - **Live-Suche**: unscharfe Suche nach Name und Domain, Treffer erscheinen beim Tippen. Tippfehler und Umlaute sind kein Problem („arzte“ findet „Ärzte“). Taste `/` springt ins Suchfeld, Enter öffnet den ersten Treffer.
 - **Import und Export**: im HTML-Format, das alle Browser und Raindrop beherrschen. Ordner bleiben erhalten, doppelte Adressen werden übersprungen. Favoriten, Ordner-Symbole und -Farben kennt das Format nicht, sie gehen beim Export verloren.
 - **Handy-tauglich**: als Web-App installierbar; unter Android Links direkt über „Teilen“ speichern
@@ -35,7 +35,7 @@ Ein Container ist für genau einen Benutzer gedacht. Für mehrere Benutzer legst
 1. In der Unraid-Konsole die Vorlage herunterladen:
 
    ```sh
-   wget -O /boot/config/plugins/dockerMan/templates-user/my-sebo.xml      https://raw.githubusercontent.com/mr-glubschi/sebo/main/unraid/sebo.xml
+   wget -O /boot/config/plugins/dockerMan/templates-user/my-sebo.xml https://raw.githubusercontent.com/mr-glubschi/sebo/main/unraid/sebo.xml
    ```
 
 2. **Docker → Add Container** öffnen und bei **Template** „sebo“ auswählen.
@@ -144,7 +144,7 @@ Die Dateien in `backups/` sind immer in sich stimmig und lassen sich auch im lau
 
 - **Android (Chrome):** SEBO über HTTPS öffnen, im Menü „Zum Startbildschirm hinzufügen“ bzw. „App installieren“. Danach erscheint SEBO im „Teilen“-Menü anderer Apps: Link teilen, SEBO wählen, Ordner aussuchen, speichern.
 - **iPhone (Safari):** „Teilen“ → „Zum Home-Bildschirm“. iOS unterstützt kein Teilen an Web-Apps. Link kopieren und im „Hinzufügen“-Dialog mit dem Einfügen-Knopf übernehmen. Die installierte Web-App hat eigene Cookies, du meldest dich dort einmal neu an.
-- Zum Verschieben ein Bookmark lange drücken und auf einen Ordner im Menü ziehen.
+- Zum Verschieben ein Bookmark oder einen Ordner lange drücken und auf einen Ordner im Menü ziehen. Ordner lassen sich so auch umsortieren: an den oberen oder unteren Rand eines anderen Ordners ziehen.
 - Der ⋯-Knopf auf Karten und Ordnern öffnet das Menü mit allen Aktionen, darunter „Auswählen“ für die Mehrfachauswahl.
 
 ## Lizenz

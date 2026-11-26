@@ -9,7 +9,7 @@
   <Privileged>false</Privileged>
   <Support>https://github.com/mr-glubschi/sebo/issues</Support>
   <Project>https://github.com/mr-glubschi/sebo</Project>
-  <Overview>SEBO (Self-hosted Bookmarks): schlanke Bookmark-Verwaltung im Browser. Ordner mit Unterordnern, Vorschaubilder, drei Ansichten, unscharfe Live-Suche, Links per Drag &amp; Drop hinzufügen, HTML-Import und -Export, am Handy als Web-App installierbar. Login mit Passwort und Zwei-Faktor-Code. Ein Benutzer pro Container. Beim ersten Start steht der QR-Code für die Authenticator-App im Log des Containers.</Overview>
+  <Overview>SEBO (Self-hosted Bookmarks): schlanke Bookmark-Verwaltung im Browser. Ordner mit Unterordnern, Symbolen und Farben, Favoriten, Vorschaubilder, drei Ansichten und eine nach Ordnern gruppierte Ansicht, unscharfe Live-Suche, Mehrfachauswahl, Links per Drag &amp; Drop hinzufügen, HTML-Import und -Export, am Handy als Web-App installierbar. Login mit Passwort und Zwei-Faktor-Code. Ein Benutzer pro Container. Beim ersten Start steht der QR-Code für die Authenticator-App im Log des Containers.</Overview>
   <Category>Productivity: Tools:</Category>
   <WebUI>http://[IP]:[PORT:8080]/</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/mr-glubschi/sebo/main/unraid/sebo.xml</TemplateURL>

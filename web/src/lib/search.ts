@@ -68,8 +68,6 @@ export class SearchIndex {
   }
 }
 
-export const SEARCH_LIMIT = MAX_RESULTS;
-
 /**
  * Hervorhebung ohne Trefferbereiche von uFuzzy (Suchwörter in anderer
  * Reihenfolge): jedes Suchwort als Teilzeichenkette im Titel markieren.
