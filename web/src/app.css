@@ -13,6 +13,18 @@
   --mark: rgb(255 214 0 / 0.45);
   --drop: rgb(47 111 94 / 0.3);
   --radius: 10px;
+  /* Ordnerfarben (folderColors.ts), mind. 3:1 gegen alle Seitenleisten-Hintergründe */
+  --folder-red: #c62828;
+  --folder-orange: #ad4500;
+  --folder-yellow: #8a5d00;
+  --folder-green: #2a7230;
+  --folder-teal: #006b5f;
+  --folder-blue: #1565c0;
+  --folder-indigo: #3f51b5;
+  --folder-purple: #7b1fa2;
+  --folder-pink: #c2185b;
+  --folder-brown: #795548;
+  --folder-gray: #616161;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   line-height: 1.5;
   color-scheme: light dark;
@@ -32,6 +44,17 @@
     --selected: rgb(108 195 168 / 0.18);
     --mark: rgb(255 214 0 / 0.3);
     --drop: rgb(108 195 168 / 0.35);
+    --folder-red: #ff9e97;
+    --folder-orange: #ffab70;
+    --folder-yellow: #f5c542;
+    --folder-green: #81c784;
+    --folder-teal: #4dd0c4;
+    --folder-blue: #8fb9ff;
+    --folder-indigo: #aab2ff;
+    --folder-purple: #dba8e4;
+    --folder-pink: #f7a1bf;
+    --folder-brown: #d2b597;
+    --folder-gray: #b8b8b8;
   }
 }
 

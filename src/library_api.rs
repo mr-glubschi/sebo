@@ -29,6 +29,7 @@ pub fn router() -> Router<AppState> {
         .route("/folders/{id}", patch(update_folder).delete(delete_folder))
         .route("/folders/bulk-delete", post(delete_folders))
         .route("/folders/merge", post(merge_folders))
+        .route("/folders/order", post(order_folders))
         .route("/bookmarks", post(create_bookmark))
         .route("/bookmarks/bulk", post(bulk_bookmarks))
         .route(
@@ -139,6 +140,9 @@ struct UpdateFolder {
     /// `null` = wieder das Standard-Symbol.
     #[serde(default, deserialize_with = "double_option")]
     icon: Option<Option<String>>,
+    /// `null` = wieder die Akzentfarbe.
+    #[serde(default, deserialize_with = "double_option")]
+    color: Option<Option<String>>,
 }
 
 async fn update_folder(
@@ -150,13 +154,13 @@ async fn update_folder(
     let folder = with_db(&state, move |conn| {
         // Alles oder nichts, falls z. B. das Verschieben abgelehnt wird.
         let tx = conn.transaction()?;
-        let folder = library::update_folder(
-            &tx,
-            id,
-            input.name.as_deref(),
-            input.parent_id,
-            input.icon.as_ref().map(Option::as_deref),
-        )?;
+        let change = library::FolderUpdate {
+            name: input.name.as_deref(),
+            parent_id: input.parent_id,
+            icon: input.icon.as_ref().map(Option::as_deref),
+            color: input.color.as_ref().map(Option::as_deref),
+        };
+        let folder = library::update_folder(&tx, id, change)?;
         tx.commit()?;
         Ok(folder)
     })
@@ -213,6 +217,25 @@ async fn delete_folders(
     })
     .await?;
     library::remove_image_files(&state.images_dir, &deleted);
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct OrderFolders {
+    parent_id: Option<i64>,
+    /// Alle Ordner der Ebene in der gewünschten Reihenfolge.
+    ids: Vec<i64>,
+}
+
+async fn order_folders(
+    _: Authenticated,
+    State(state): State<AppState>,
+    Json(input): Json<OrderFolders>,
+) -> Result<StatusCode, ApiError> {
+    with_db(&state, move |conn| {
+        library::order_folders(conn, input.parent_id, &input.ids)
+    })
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -726,10 +749,20 @@ mod tests {
             "PATCH",
             &format!("/api/folders/{a}"),
             &cookie,
-            Some(json!({ "icon": "music" })),
+            Some(json!({ "icon": "music", "color": "blue" })),
         )
         .await;
         assert_eq!(status, StatusCode::OK);
+
+        // B vor A; B als Unterordner von sich selbst wird abgelehnt.
+        let (status, _) = post(
+            "/api/folders/order",
+            json!({ "parent_id": null, "ids": [b, a] }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let (status, _) = post("/api/folders/order", json!({ "parent_id": b, "ids": [b] })).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
 
         let (status, folder) =
             post("/api/folders/merge", json!({ "target": a, "sources": [b] })).await;

@@ -150,6 +150,7 @@
     if (target === "unsorted") return "Unsortiert";
     if (target === "root") return "oberste Ebene";
     if (target === "favorites") return "Favoriten";
+    if (typeof target === "object") return folderName(target.id);
     return folderName(target);
   }
 
@@ -295,7 +296,7 @@
   async function move(item: DragItem, target: DropTarget) {
     try {
       if (item.kind === "bookmark") {
-        if (target === "root") return;
+        if (target === "root" || typeof target === "object") return;
         const ids = draggedIds(item);
         if (target === "favorites") {
           await setFavorite(ids, true);
@@ -314,6 +315,10 @@
         toasts.show(`${label} → ${targetName(target)}`);
       } else {
         if (target === "favorites") return;
+        if (typeof target === "object") {
+          await placeFolder(item, target);
+          return;
+        }
         // Unsortiert und „oberste Ebene“ bedeuten für Ordner dasselbe.
         const parent = typeof target === "number" ? target : null;
         const folder = tree.byId.get(item.id);
@@ -328,6 +333,36 @@
           `Ordner „${item.label}“ → ${parent === null ? "oberste Ebene" : folderName(parent)}`,
         );
       }
+    } catch (e) {
+      toasts.show(errorText(e), true);
+    }
+    await reload();
+  }
+
+  /** Ordner vor oder hinter einen anderen ziehen (auch in eine andere Ebene). */
+  async function placeFolder(
+    item: DragItem & { kind: "folder" },
+    target: { place: "before" | "after"; id: number },
+  ) {
+    const folder = tree.byId.get(item.id);
+    const ref = tree.byId.get(target.id);
+    if (!folder || !ref || ref.id === folder.id) return;
+    // Wie in buildTree: unbekannter Elternordner = oberste Ebene.
+    const parent = ref.parent_id !== null && tree.byId.has(ref.parent_id) ? ref.parent_id : null;
+    if (parent !== null && subtree(tree, item.id).has(parent)) {
+      toasts.show("Ein Ordner kann nicht in sich selbst liegen.", true);
+      return;
+    }
+    const current = (tree.children.get(parent) ?? []).map((f) => f.id);
+    const ids = current.filter((id) => id !== item.id);
+    ids.splice(ids.indexOf(ref.id) + (target.place === "after" ? 1 : 0), 0, item.id);
+    if (ids.length === current.length && ids.every((id, index) => id === current[index])) return;
+    try {
+      await api.orderFolders(parent, ids);
+      if (folder.parent_id !== parent)
+        toasts.show(
+          `Ordner „${item.label}“ → ${parent === null ? "oberste Ebene" : folderName(parent)}`,
+        );
     } catch (e) {
       toasts.show(errorText(e), true);
     }
@@ -789,7 +824,7 @@
                 onclick={(event) => linkClick(target, event)}
                 oncontextmenu={(event) => folderMenu(folder, event)}
               >
-                <FolderIcon name={folder.icon} />
+                <FolderIcon name={folder.icon} color={folder.color} />
                 <span>{folder.name}</span>
               </a>
             </li>
@@ -899,7 +934,7 @@
   {@const ids = drag.item.kind === "bookmark" ? draggedIds(drag.item) : []}
   <div class="ghost" style:transform="translate({drag.x + 14}px, {drag.y + 14}px)">
     {#if drag.item.kind === "folder"}
-      <FolderIcon name={drag.item.icon} />
+      <FolderIcon name={drag.item.icon} color={drag.item.color} />
     {:else}
       <Icon name="all" />
     {/if}

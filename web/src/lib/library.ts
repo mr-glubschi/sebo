@@ -37,7 +37,7 @@ export function sameRoute(a: Route, b: Route): boolean {
 
 export interface Tree {
   byId: Map<number, Folder>;
-  /** Unterordner je Ordner, `null` = oberste Ebene. Nach Namen sortiert. */
+  /** Unterordner je Ordner, `null` = oberste Ebene. Eigene Reihenfolge, sonst nach Namen. */
   children: Map<number | null, Folder[]>;
 }
 
@@ -53,7 +53,8 @@ export function buildTree(folders: Folder[]): Tree {
     list.push(folder);
     children.set(parent, list);
   }
-  for (const list of children.values()) list.sort((a, b) => collator.compare(a.name, b.name));
+  for (const list of children.values())
+    list.sort((a, b) => a.position - b.position || collator.compare(a.name, b.name) || a.id - b.id);
   return { byId, children };
 }
 

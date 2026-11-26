@@ -12,6 +12,7 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!("../migrations/001_auth.sql")),
     M::up(include_str!("../migrations/002_library.sql")),
     M::up(include_str!("../migrations/003_favorites_icons.sql")),
+    M::up(include_str!("../migrations/004_folder_order_color.sql")),
 ];
 
 fn migrations() -> Migrations<'static> {

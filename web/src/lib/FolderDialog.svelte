@@ -3,6 +3,7 @@
   import type { Bookmark } from "./bindings/Bookmark";
   import type { Folder } from "./bindings/Folder";
   import DeleteFolderChoice from "./DeleteFolderChoice.svelte";
+  import { FOLDER_COLOR_NAMES, FOLDER_COLORS, folderColor } from "./folderColors";
   import FolderIcon from "./FolderIcon.svelte";
   import { FOLDER_ICON_NAMES, FOLDER_ICONS } from "./folderIcons";
   import FolderSelect from "./FolderSelect.svelte";
@@ -30,11 +31,13 @@
     name: folder?.name ?? "",
     parent: folder ? folder.parent_id : parentId,
     icon: folder?.icon ?? null,
+    color: folder?.color ?? null,
   }))();
 
   let name = $state(initial.name);
   let parent = $state<number | null>(initial.parent);
   let icon = $state<string | null>(initial.icon);
+  let color = $state<string | null>(initial.color);
   let contents = $state<DeleteContents>("move");
   let isEmpty = $state(true);
 
@@ -76,13 +79,14 @@
     if (!folder) {
       ok = await run(async () => {
         const created = await api.createFolder(trimmed, parent);
-        if (icon !== null) await api.updateFolder(created.id, { icon });
+        if (icon !== null || color !== null) await api.updateFolder(created.id, { icon, color });
       });
     } else {
       const changes: FolderChanges = {};
       if (trimmed !== folder.name) changes.name = trimmed;
       if (parent !== folder.parent_id) changes.parent_id = parent;
       if (icon !== folder.icon) changes.icon = icon;
+      if (color !== folder.color) changes.color = color;
       const id = folder.id;
       ok = Object.keys(changes).length === 0 || (await run(() => api.updateFolder(id, changes)));
     }
@@ -120,17 +124,34 @@
     />
 
     <fieldset>
+      <legend>Farbe</legend>
+      <div class="colors">
+        <label class="color-option" title="Standard">
+          <input type="radio" bind:group={color} value={null} aria-label="Standard" />
+          <span class="swatch" style:background={folderColor(null)}></span>
+        </label>
+        {#each FOLDER_COLOR_NAMES as option (option)}
+          {@const label = FOLDER_COLORS[option] ?? option}
+          <label class="color-option" title={label}>
+            <input type="radio" bind:group={color} value={option} aria-label={label} />
+            <span class="swatch" style:background={folderColor(option)}></span>
+          </label>
+        {/each}
+      </div>
+    </fieldset>
+
+    <fieldset>
       <legend>Symbol</legend>
       <div class="icons">
         <label class="icon-option" title="Standard">
           <input type="radio" bind:group={icon} value={null} aria-label="Standard" />
-          <FolderIcon name={null} />
+          <FolderIcon name={null} {color} />
         </label>
         {#each FOLDER_ICON_NAMES as option (option)}
           {@const label = FOLDER_ICONS[option]?.label ?? option}
           <label class="icon-option" title={label}>
             <input type="radio" bind:group={icon} value={option} aria-label={label} />
-            <FolderIcon name={option} />
+            <FolderIcon name={option} {color} />
           </label>
         {/each}
       </div>
@@ -244,7 +265,43 @@
     outline-offset: 1px;
   }
 
+  .colors {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+  }
+
+  .color-option {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 50%;
+    cursor: pointer;
+  }
+
+  .color-option:hover {
+    background: var(--hover);
+  }
+
+  .swatch {
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 50%;
+  }
+
+  .color-option:has(input:checked) {
+    box-shadow: inset 0 0 0 2px var(--text);
+  }
+
+  .color-option:has(input:focus-visible) {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
   /* Radio unsichtbar, aber per Tastatur erreichbar */
+  .color-option input,
   .icon-option input {
     position: absolute;
     opacity: 0;

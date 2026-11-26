@@ -69,11 +69,20 @@
         class="row"
         class:active={route.kind === "folder" && route.id === folder.id}
         class:drop-over={drag.target === String(folder.id)}
+        class:drop-before={drag.target === `before:${folder.id}`}
+        class:drop-after={drag.target === `after:${folder.id}`}
         class:dragged={drag.item?.kind === "folder" && drag.item.id === folder.id}
         class:selected={isSelected}
         data-drop={String(folder.id)}
+        data-reorder={open ? "top" : "both"}
         style:--depth={depth}
-        use:draggable={{ kind: "folder", id: folder.id, label: folder.name, icon: folder.icon }}
+        use:draggable={{
+          kind: "folder",
+          id: folder.id,
+          label: folder.name,
+          icon: folder.icon,
+          color: folder.color,
+        }}
         oncontextmenu={(event) => contextmenu(folder, event)}
       >
         {#if hasChildren}
@@ -101,7 +110,7 @@
               <Icon name="check" />
             </span>
           {:else}
-            <FolderIcon name={folder.icon} />
+            <FolderIcon name={folder.icon} color={folder.color} />
           {/if}
           <span class="name">{folder.name}</span>
           <span class="count">{counts.get(folder.id) ?? 0}</span>
@@ -152,6 +161,15 @@
     border-radius: calc(var(--radius) - 4px);
     -webkit-touch-callout: none;
     user-select: none;
+  }
+
+  /* Einfügemarke beim Sortieren */
+  .row.drop-before {
+    box-shadow: inset 0 2px 0 var(--accent);
+  }
+
+  .row.drop-after {
+    box-shadow: inset 0 -2px 0 var(--accent);
   }
 
   .row.dragged {

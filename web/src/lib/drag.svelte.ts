@@ -6,13 +6,24 @@ import { findUrls, normalizeUrl } from "./links";
 // Touch: Ziehen beginnt nach langem Drücken; kurzes Wischen scrollt normal.
 // Ablageziele sind Elemente mit `data-drop`: Ordner-ID, "none" (Unsortiert),
 // "root" (oberste Ebene, nur für Ordner) oder "fav" (Favoriten, nur für Bookmarks).
+// Ordnerzeilen mit `data-reorder` sind beim Ziehen eines Ordners dreigeteilt: oberer
+// Rand = davor, unterer Rand = danach, Mitte = hinein. Bei `data-reorder="top"`
+// (aufgeklappter Ordner, darunter folgen seine Unterordner) gibt es kein „danach“.
 
 export type DragItem =
   | { kind: "bookmark"; id: number; label: string }
-  | { kind: "folder"; id: number; label: string; icon: string | null };
+  | { kind: "folder"; id: number; label: string; icon: string | null; color: string | null };
 
-/** Ablageziel: Ordner-ID oder eines der festen Ziele. */
-export type DropTarget = number | "unsorted" | "root" | "favorites";
+/** Ablageziel: Ordner-ID, eines der festen Ziele oder eine Stelle neben einem Ordner. */
+export type DropTarget =
+  | number
+  | "unsorted"
+  | "root"
+  | "favorites"
+  | { place: "before" | "after"; id: number };
+
+/** Anteil der Zeilenhöhe oben und unten, der „davor“ bzw. „danach“ bedeutet. */
+const REORDER_EDGE = 0.3;
 
 const LONG_PRESS_MS = 450;
 const MOUSE_THRESHOLD = 6;
@@ -39,6 +50,8 @@ export function parseTarget(value: string | null | undefined): DropTarget | unde
   if (value === "none") return "unsorted";
   if (value === "root") return "root";
   if (value === "fav") return "favorites";
+  const place = /^(before|after):(\d+)$/.exec(value);
+  if (place) return { place: place[1] === "before" ? "before" : "after", id: Number(place[2]) };
   const id = Number(value);
   return Number.isInteger(id) && id > 0 ? id : undefined;
 }
@@ -46,7 +59,15 @@ export function parseTarget(value: string | null | undefined): DropTarget | unde
 export function targetAt(x: number, y: number): string | null {
   const element = document.elementFromPoint(x, y);
   const target = element?.closest<HTMLElement>("[data-drop]");
-  return target?.dataset.drop ?? null;
+  const value = target?.dataset.drop ?? null;
+  const reorder = target?.dataset.reorder;
+  if (value && reorder && drag.item?.kind === "folder") {
+    const box = target.getBoundingClientRect();
+    const at = (y - box.top) / box.height;
+    if (at < REORDER_EDGE) return `before:${value}`;
+    if (at > 1 - REORDER_EDGE && reorder !== "top") return `after:${value}`;
+  }
+  return value;
 }
 
 /** Svelte-Action: macht ein Element ziehbar. */

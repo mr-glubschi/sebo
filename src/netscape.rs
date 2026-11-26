@@ -478,6 +478,8 @@ mod tests {
             parent_id: None,
             name: "<Ordner> & \"Zitat\"".into(),
             icon: None,
+            color: None,
+            position: 0,
             created_at: 5,
         }];
         let bookmark = |id, folder_id, url: &str, title: &str| Bookmark {

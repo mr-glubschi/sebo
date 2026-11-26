@@ -6,7 +6,7 @@ Selbst gehostete Bookmark-Verwaltung im Stil von Raindrop, bewusst auf das Minim
 
 ## Grundsätze
 
-- **Minimal bleiben.** Neue Funktionen nur nach Rücksprache. Kein Tagging (Favorit ist ein einzelnes Merkmal, keine Vorstufe dazu), keine Volltextsuche, keine Notizen, keine Sync-Erweiterungen, keine manuelle Sortierung, kein Offline-Modus.
+- **Minimal bleiben.** Neue Funktionen nur nach Rücksprache. Kein Tagging (Favorit ist ein einzelnes Merkmal, keine Vorstufe dazu), keine Volltextsuche, keine Notizen, keine Sync-Erweiterungen, keine manuelle Sortierung von Bookmarks (Ordner lassen sich per Ziehen sortieren), kein Offline-Modus.
 - **Ein Benutzer pro Container.** Mehrere Benutzer = mehrere Container. Kein Benutzerverwaltungs-Code.
 - **Keine Seiteninhalte speichern.** Gespeichert werden nur Titel, URL, OG-Bild und Favicon. Kein Text, kein HTML, keine Archivierung.
 - **Bilder:** OG-Bild zuerst, Favicon als Ausweichlösung und für Liste/Kompakt-Ansicht. Keine Screenshots per Headless-Browser. Gespeichert als JPEG (OG) und PNG (Favicon), immer neu kodiert.
@@ -41,10 +41,12 @@ Selbst gehostete Bookmark-Verwaltung im Stil von Raindrop, bewusst auf das Minim
 
 - Backend: Rust, Axum, SQLite über `tokio-rusqlite` (eine Verbindung, WAL), `rusqlite_migration`, `reqwest` + `rustls`, `scraper`, `image`, `resvg`, `totp-rs`, `tracing`
 - Frontend: Svelte 5 + Vite + TypeScript als SPA (ohne SvelteKit), uFuzzy, einfaches CSS. PWA ohne Plugin: `web/public/manifest.webmanifest` und eigener `web/public/sw.js`, der nur `/assets/*` cacht (nie API oder Bilder). Bei Änderungen am Service Worker den Cache-Namen hochzählen.
-- Drag & Drop selbst geschrieben (`web/src/lib/drag.svelte.ts`): Pointer Events, Touch nach langem Drücken, Ablageziele per `data-drop` (Ordner-ID, `none` = Unsortiert, `root` = oberste Ebene, `fav` = Favoriten). Natives Ziehen innerhalb der Seite ist unterbunden.
+- Drag & Drop selbst geschrieben (`web/src/lib/drag.svelte.ts`): Pointer Events, Touch nach langem Drücken, Ablageziele per `data-drop` (Ordner-ID, `none` = Unsortiert, `root` = oberste Ebene, `fav` = Favoriten). Ordnerzeilen haben zusätzlich `data-reorder`: Beim Ziehen eines Ordners bedeutet der obere/untere Rand (30 %) „davor“/„danach“, die Mitte „hinein“; aufgeklappte Ordner nur „davor“. Natives Ziehen innerhalb der Seite ist unterbunden.
 - Kontextmenü (`menu.svelte.ts`, `ContextMenu.svelte`): Rechtsklick oder ⋯-Knopf, am Handy als Blatt von unten. Langes Drücken bleibt Ziehen. Mehrfachauswahl (`selection.svelte.ts`) entweder Bookmarks oder Ordner, Start über „Auswählen“ im Menü oder (nur Maus) über den Kreis, der beim Überfahren eines Bookmarks oben links erscheint (Strg-Klick bleibt „neuer Tab“).
 - Sammelaktionen über `POST /api/bookmarks/bulk`, `/api/folders/bulk-delete`, `/api/folders/merge`, jeweils eine Transaktion. Zusammenführen vereint gleichnamige Unterordner wie der Import.
 - Ordner-Symbole: feste Auswahl aus Lucide (`web/src/lib/folderIcons.ts`, `lucide` nur als Dev-Abhängigkeit, einzeln importiert). In der DB steht nur der Name (`[a-z0-9-]`), Darstellung per `<svelte:element>` ohne `{@html}`. Unbekannte Namen zeigen den Standard-Ordner.
+- Ordner-Farben: feste Palette (`folderColors.ts`, Werte als `--folder-*` in `app.css` für hell und dunkel), in der DB nur der Schlüssel, ohne Farbe = Akzentfarbe. Jede Farbe braucht mindestens 3:1 Kontrast gegen alle Seitenleisten-Hintergründe (auch ausgewählt und Ablage-Markierung), sonst verschwindet das Symbol im ausgewählten Ordner.
+- Ordner-Reihenfolge: `folders.position` je Ebene, bei Gleichstand nach Namen (bestehende Ordner haben alle 0). Neue, importierte und per Bearbeiten verschobene Ordner kommen ans Ende. Sortieren über `POST /api/folders/order` mit der ganzen Ebene.
 - Routen: `/` = Favoriten (Startseite), `/alle`, `/unsortiert`, `/f/<id>`.
 - Lange Listen werden schrittweise gerendert (`BookmarkView`, 150 pro Schritt). Nicht wieder alles auf einmal rendern, das kostet bei 5000 Bookmarks ein Vielfaches an Speicher.
 - API-Typen werden mit `ts-rs` aus Rust erzeugt (`cargo test` schreibt sie nach `web/src/lib/bindings/`), nicht von Hand pflegen. Die CI prüft, dass sie aktuell sind. ts-rs ist nur Dev-Abhängigkeit (`cfg_attr(test, ...)`).
@@ -62,7 +64,7 @@ Selbst gehostete Bookmark-Verwaltung im Stil von Raindrop, bewusst auf das Minim
 
 ## Bewusste Entscheidungen
 
-- Nicht umgesetzt: `PASSWORD_FILE`, iOS-Kurzbefehle mit API-Token, arm64-Image, manuelle Sortierung, Offline-Modus, Subpath-Betrieb. Lange Listen werden schrittweise gerendert statt virtuell gescrollt.
+- Nicht umgesetzt: `PASSWORD_FILE`, iOS-Kurzbefehle mit API-Token, arm64-Image, manuelle Sortierung von Bookmarks, Offline-Modus, Subpath-Betrieb. Lange Listen werden schrittweise gerendert statt virtuell gescrollt.
 - Die Passwort-Variable bleibt im Prozess (Entfernen bringt nichts, `docker inspect` zeigt sie ohnehin). Wer Klartext vermeiden will, nutzt `PASSWORD_HASH`.
 - `reset-2fa` zeigt den QR-Code in der Konsole des Befehls, nicht im Log.
 - Sitzungen laufen nach 30 Tagen ohne Nutzung ab. Alle abmelden: Passwort ändern oder `reset-2fa`.
@@ -70,7 +72,7 @@ Selbst gehostete Bookmark-Verwaltung im Stil von Raindrop, bewusst auf das Minim
 - rustls mit `ring` + `webpki-roots` (aws-lc-rs bräuchte CMake/NASM im Build).
 - Status `skipped` = interne Adresse, gespeichert, aber nicht abgerufen. `title_auto` = Titel darf vom Abruf ersetzt werden; leerer Titel setzt sofort den Hostnamen.
 - Import führt gleichnamige Ordner an gleicher Stelle zusammen und überspringt doppelte URLs, damit ein zweiter Import nichts verdoppelt. Nicht-UTF-8-Dateien werden als Windows-1252 gelesen.
-- Favoriten und Ordner-Symbole gehen beim Netscape-Export verloren (das Format hat keine Felder dafür).
+- Favoriten, Ordner-Symbole und -Farben gehen beim Netscape-Export verloren (das Format hat keine Felder dafür). Die Ordner-Reihenfolge bleibt erhalten, auch beim Import.
 - Ein reiner Favoriten-Wechsel oder Sammel-Verschieben ändert `updated_at` nicht, sonst laden alle Vorschaubilder neu (`?v=updated_at`).
 
 ## Leistung

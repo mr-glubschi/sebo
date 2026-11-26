@@ -12,11 +12,11 @@ Eine schlanke, selbst gehostete Bookmark-Verwaltung für Unraid. Bookmarks ersch
 - **Vorschaubilder**: das Vorschaubild der Webseite (`og:image`), sonst das Favicon, sonst ein farbiger Anfangsbuchstabe
 - **Drei Ansichten**: Karten, Liste und Kompakt, sortiert nach Name oder Datum. Ansicht und Sortierung merkt sich der Browser.
 - **Favoriten**: Bookmarks als Favorit markieren. Die Favoriten sind die Startseite; „Alle Bookmarks“ liegt unter `/alle`.
-- **Ordner und Unterordner**: beliebig tief, jeweils mit eigenem Symbol. Bookmarks und Ordner mit der Maus auf einen Ordner ziehen, am Handy lange drücken und ziehen, oder über „Verschieben nach …“. Ein Unterordner kommt auf die oberste Ebene, indem man ihn auf „Hierher: oberste Ebene“ über dem Ordnerbaum zieht.
+- **Ordner und Unterordner**: beliebig tief, jeweils mit eigenem Symbol und eigener Farbe. Die Reihenfolge bestimmst du selbst: Ordner an den oberen oder unteren Rand eines anderen Ordners ziehen, neue Ordner kommen ans Ende. Bookmarks und Ordner mit der Maus auf einen Ordner ziehen, am Handy lange drücken und ziehen, oder über „Verschieben nach …“. Ein Unterordner kommt auf die oberste Ebene, indem man ihn auf „Hierher: oberste Ebene“ über dem Ordnerbaum zieht.
 - **Kontextmenü**: Rechtsklick (oder der ⋯-Knopf, am Handy) auf ein Bookmark oder einen Ordner bietet die wichtigsten Aktionen: öffnen, bearbeiten, als Favorit markieren, verschieben, Link kopieren, löschen.
 - **Mehrfachauswahl**: Im Kontextmenü „Auswählen“ wählen, dann weitere Einträge antippen (Umschalt-Klick wählt einen Bereich). Ausgewählte Bookmarks lassen sich gemeinsam verschieben, als Favorit markieren oder löschen, ausgewählte Ordner gemeinsam verschieben, löschen oder zusammenführen.
 - **Live-Suche**: unscharfe Suche nach Name und Domain, Treffer erscheinen beim Tippen. Tippfehler und Umlaute sind kein Problem („arzte“ findet „Ärzte“). Taste `/` springt ins Suchfeld, Enter öffnet den ersten Treffer.
-- **Import und Export**: im HTML-Format, das alle Browser und Raindrop beherrschen. Ordner bleiben erhalten, doppelte Adressen werden übersprungen. Favoriten und Ordner-Symbole kennt das Format nicht, sie gehen beim Export verloren.
+- **Import und Export**: im HTML-Format, das alle Browser und Raindrop beherrschen. Ordner bleiben erhalten, doppelte Adressen werden übersprungen. Favoriten, Ordner-Symbole und -Farben kennt das Format nicht, sie gehen beim Export verloren.
 - **Handy-tauglich**: als Web-App installierbar; unter Android Links direkt über „Teilen“ speichern
 - **Automatische Sicherung**: tägliche Kopie der Datenbank, die letzten 7 Tage werden aufbewahrt
 - **Hell und dunkel**: folgt der Einstellung des Geräts

@@ -4,4 +4,12 @@ export type Folder = { id: number, parent_id: number | null, name: string,
 /**
  * Symbol aus der festen Auswahl im Frontend, `None` = Standard-Ordner.
  */
-icon: string | null, created_at: number, };
+icon: string | null, 
+/**
+ * Farbe des Symbols aus der festen Palette im Frontend, `None` = Akzentfarbe.
+ */
+color: string | null, 
+/**
+ * Reihenfolge innerhalb der Ebene; bei gleichem Wert nach Namen.
+ */
+position: number, created_at: number, };

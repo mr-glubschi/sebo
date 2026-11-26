@@ -21,6 +21,11 @@ pub struct Folder {
     pub name: String,
     /// Symbol aus der festen Auswahl im Frontend, `None` = Standard-Ordner.
     pub icon: Option<String>,
+    /// Farbe des Symbols aus der festen Palette im Frontend, `None` = Akzentfarbe.
+    pub color: Option<String>,
+    /// Reihenfolge innerhalb der Ebene; bei gleichem Wert nach Namen.
+    #[cfg_attr(test, ts(type = "number"))]
+    pub position: i64,
     #[cfg_attr(test, ts(type = "number"))]
     pub created_at: i64,
 }
@@ -159,8 +164,8 @@ pub fn clean_folder_name(input: &str) -> Result<String> {
 
 pub const MAX_ICON_CHARS: usize = 40;
 
-/// Name eines Ordner-Symbols: nur `a-z`, `0-9` und `-`. Welche Namen es gibt,
-/// weiß nur das Frontend; unbekannte zeigt es als normalen Ordner.
+/// Name eines Ordner-Symbols oder einer Farbe: nur `a-z`, `0-9` und `-`. Welche
+/// Namen es gibt, weiß nur das Frontend; unbekannte zeigt es als Standard.
 pub fn clean_icon(input: &str) -> Result<&str> {
     let valid = !input.is_empty()
         && input.len() <= MAX_ICON_CHARS
@@ -170,7 +175,7 @@ pub fn clean_icon(input: &str) -> Result<&str> {
     if valid {
         Ok(input)
     } else {
-        Err(invalid("Ungültiges Ordner-Symbol"))
+        Err(invalid("Ungültiges Ordner-Symbol oder ungültige Farbe"))
     }
 }
 
@@ -205,7 +210,7 @@ pub fn remove_image_files(images_dir: &Path, ids: &[i64]) {
 const BOOKMARK_COLUMNS: &str = "id, folder_id, url, title, has_image, has_icon, meta_status, \
      created_at, updated_at, favorite";
 
-const FOLDER_COLUMNS: &str = "id, parent_id, name, created_at, icon";
+const FOLDER_COLUMNS: &str = "id, parent_id, name, created_at, icon, color, position";
 
 fn bookmark_from_row(row: &Row) -> rusqlite::Result<Bookmark> {
     let id: i64 = row.get(0)?;
@@ -236,13 +241,15 @@ fn folder_from_row(row: &Row) -> rusqlite::Result<Folder> {
         name: row.get(2)?,
         created_at: row.get(3)?,
         icon: row.get(4)?,
+        color: row.get(5)?,
+        position: row.get(6)?,
     })
 }
 
 pub fn load(conn: &Connection) -> Result<Library> {
     let folders = conn
         .prepare(&format!(
-            "SELECT {FOLDER_COLUMNS} FROM folders ORDER BY name COLLATE NOCASE, id"
+            "SELECT {FOLDER_COLUMNS} FROM folders ORDER BY position, name COLLATE NOCASE, id"
         ))?
         .query_map([], folder_from_row)?
         .collect::<rusqlite::Result<_>>()?;
@@ -309,49 +316,109 @@ pub fn create_folder(conn: &Connection, name: &str, parent_id: Option<i64>) -> R
     let name = clean_folder_name(name)?;
     ensure_folder(conn, parent_id)?;
     conn.execute(
-        "INSERT INTO folders (parent_id, name, created_at) VALUES (?1, ?2, ?3)",
+        &format!(
+            "INSERT INTO folders (parent_id, name, created_at, position) VALUES (?1, ?2, ?3, {END_POSITION})"
+        ),
         params![parent_id, name, now_secs()],
     )?;
     get_folder(conn, conn.last_insert_rowid())
 }
 
-pub fn update_folder(
-    conn: &Connection,
-    id: i64,
-    name: Option<&str>,
-    parent_id: Option<Option<i64>>,
-    icon: Option<Option<&str>>,
-) -> Result<Folder> {
-    get_folder(conn, id)?;
-    if let Some(icon) = icon {
+/// Position am Ende der Ebene `?1` (Elternordner, `NULL` = oberste Ebene).
+const END_POSITION: &str =
+    "(SELECT COALESCE(MAX(position), 0) + 1 FROM folders WHERE parent_id IS ?1)";
+
+/// Änderungen an einem Ordner; `None` = unverändert, `Some(None)` = zurücksetzen.
+#[derive(Debug, Default)]
+pub struct FolderUpdate<'a> {
+    pub name: Option<&'a str>,
+    pub parent_id: Option<Option<i64>>,
+    pub icon: Option<Option<&'a str>>,
+    pub color: Option<Option<&'a str>>,
+}
+
+pub fn update_folder(conn: &Connection, id: i64, change: FolderUpdate) -> Result<Folder> {
+    let current = get_folder(conn, id)?;
+    if let Some(icon) = change.icon {
         let icon = icon.map(clean_icon).transpose()?;
         conn.execute(
             "UPDATE folders SET icon = ?2 WHERE id = ?1",
             params![id, icon],
         )?;
     }
-    if let Some(name) = name {
+    if let Some(color) = change.color {
+        let color = color.map(clean_icon).transpose()?;
+        conn.execute(
+            "UPDATE folders SET color = ?2 WHERE id = ?1",
+            params![id, color],
+        )?;
+    }
+    if let Some(name) = change.name {
         let name = clean_folder_name(name)?;
         conn.execute(
             "UPDATE folders SET name = ?2 WHERE id = ?1",
             params![id, name],
         )?;
     }
-    if let Some(parent_id) = parent_id {
-        ensure_folder(conn, parent_id)?;
-        if let Some(parent) = parent_id
-            && subtree(conn, id)?.contains(&parent)
-        {
-            return Err(invalid(
-                "Ein Ordner kann nicht in sich selbst oder einen seiner Unterordner verschoben werden",
-            ));
-        }
-        conn.execute(
-            "UPDATE folders SET parent_id = ?2 WHERE id = ?1",
-            params![id, parent_id],
-        )?;
+    if let Some(parent_id) = change.parent_id
+        && parent_id != current.parent_id
+    {
+        move_folder(conn, id, parent_id)?;
     }
     get_folder(conn, id)
+}
+
+/// Hängt einen Ordner an das Ende einer anderen Ebene.
+fn move_folder(conn: &Connection, id: i64, parent_id: Option<i64>) -> Result<()> {
+    ensure_folder(conn, parent_id)?;
+    if let Some(parent) = parent_id
+        && subtree(conn, id)?.contains(&parent)
+    {
+        return Err(invalid(
+            "Ein Ordner kann nicht in sich selbst oder einen seiner Unterordner verschoben werden",
+        ));
+    }
+    conn.execute(
+        &format!("UPDATE folders SET parent_id = ?1, position = {END_POSITION} WHERE id = ?2"),
+        params![parent_id, id],
+    )?;
+    Ok(())
+}
+
+/// Höchstzahl an Ordnern pro Ebene beim Sortieren (so viele erlaubt der Import insgesamt).
+pub const MAX_ORDER_IDS: usize = 10_000;
+
+/// Legt die Reihenfolge einer Ebene fest. Ordner aus anderen Ebenen werden dabei
+/// hierher verschoben (Ziehen auf eine Position). Ordner der Ebene, die in `ids`
+/// fehlen (veraltete Ansicht), kommen danach in ihrer bisherigen Reihenfolge.
+pub fn order_folders(conn: &mut Connection, parent_id: Option<i64>, ids: &[i64]) -> Result<()> {
+    if ids.is_empty() || ids.len() > MAX_ORDER_IDS {
+        return Err(invalid("Ungültige Ordnerliste"));
+    }
+    let unique: std::collections::HashSet<i64> = ids.iter().copied().collect();
+    if unique.len() != ids.len() {
+        return Err(invalid("Ein Ordner kommt doppelt vor"));
+    }
+    let tx = conn.transaction()?;
+    ensure_folder(&tx, parent_id)?;
+    for &id in ids {
+        if get_folder(&tx, id)?.parent_id != parent_id {
+            move_folder(&tx, id, parent_id)?;
+        }
+    }
+    // Erst alle nach hinten schieben, dann die genannten nach vorne: So landen
+    // fehlende dahinter und behalten ihre Reihenfolge.
+    tx.execute(
+        "UPDATE folders SET position = position + ?2 WHERE parent_id IS ?1",
+        params![parent_id, ids.len() as i64],
+    )?;
+    let mut set = tx.prepare("UPDATE folders SET position = ?2 WHERE id = ?1")?;
+    for (index, id) in ids.iter().enumerate() {
+        set.execute(params![id, index as i64])?;
+    }
+    drop(set);
+    tx.commit()?;
+    Ok(())
 }
 
 /// Was mit dem Inhalt eines gelöschten Ordners passiert.
@@ -907,7 +974,9 @@ fn import_level(
             Some(id) => id,
             None => {
                 tx.execute(
-                    "INSERT INTO folders (parent_id, name, created_at) VALUES (?1, ?2, ?3)",
+                    &format!(
+                        "INSERT INTO folders (parent_id, name, created_at, position) VALUES (?1, ?2, ?3, {END_POSITION})"
+                    ),
                     params![parent, name, date(child.add_date)],
                 )?;
                 result.folders += 1;
@@ -1043,11 +1112,25 @@ mod tests {
 
         // Keine Kreise.
         assert!(matches!(
-            update_folder(&conn, a.id, None, Some(Some(c.id)), None),
+            update_folder(
+                &conn,
+                a.id,
+                FolderUpdate {
+                    parent_id: Some(Some(c.id)),
+                    ..Default::default()
+                }
+            ),
             Err(LibraryError::Invalid(_))
         ));
         assert!(matches!(
-            update_folder(&conn, a.id, None, Some(Some(a.id)), None),
+            update_folder(
+                &conn,
+                a.id,
+                FolderUpdate {
+                    parent_id: Some(Some(a.id)),
+                    ..Default::default()
+                }
+            ),
             Err(LibraryError::Invalid(_))
         ));
         assert!(matches!(
@@ -1077,11 +1160,94 @@ mod tests {
         assert!(load(&conn).unwrap().bookmarks.is_empty());
     }
 
+    /// Namen der Ordner einer Ebene in geladener Reihenfolge.
+    fn level(conn: &Connection, parent: Option<i64>) -> Vec<String> {
+        load(conn)
+            .unwrap()
+            .folders
+            .into_iter()
+            .filter(|f| f.parent_id == parent)
+            .map(|f| f.name)
+            .collect()
+    }
+
+    #[test]
+    fn ordner_sortieren() {
+        let mut conn = open_test();
+        // Bestehende Ordner (Position 0) nach Namen, neue ans Ende.
+        for name in ["C", "A"] {
+            let id = create_folder(&conn, name, None).unwrap().id;
+            conn.execute("UPDATE folders SET position = 0 WHERE id = ?1", [id])
+                .unwrap();
+        }
+        let b = create_folder(&conn, "B", None).unwrap();
+        assert_eq!(level(&conn, None), ["A", "C", "B"]);
+
+        let ids = |names: &[&str], conn: &Connection| -> Vec<i64> {
+            let folders = load(conn).unwrap().folders;
+            names
+                .iter()
+                .map(|n| folders.iter().find(|f| f.name == *n).unwrap().id)
+                .collect()
+        };
+        let order = ids(&["B", "C", "A"], &conn);
+        order_folders(&mut conn, None, &order).unwrap();
+        assert_eq!(level(&conn, None), ["B", "C", "A"]);
+
+        // Fehlende Ordner kommen danach, ein neuer ans Ende.
+        let order = ids(&["A", "B"], &conn);
+        order_folders(&mut conn, None, &order).unwrap();
+        assert_eq!(level(&conn, None), ["A", "B", "C"]);
+        create_folder(&conn, "0", None).unwrap();
+        assert_eq!(level(&conn, None), ["A", "B", "C", "0"]);
+
+        // In eine andere Ebene an eine bestimmte Stelle ziehen.
+        let x = create_folder(&conn, "X", Some(b.id)).unwrap();
+        let y = create_folder(&conn, "Y", Some(b.id)).unwrap();
+        let a = ids(&["A"], &conn)[0];
+        order_folders(&mut conn, Some(b.id), &[x.id, a, y.id]).unwrap();
+        assert_eq!(level(&conn, Some(b.id)), ["X", "A", "Y"]);
+        assert_eq!(level(&conn, None), ["B", "C", "0"]);
+
+        // Verschieben per Bearbeiten hängt ans Ende.
+        let change = FolderUpdate {
+            parent_id: Some(None),
+            ..Default::default()
+        };
+        update_folder(&conn, x.id, change).unwrap();
+        assert_eq!(level(&conn, None), ["B", "C", "0", "X"]);
+
+        // Kein Kreis, keine Doppelten, nichts Leeres; bei Fehler bleibt alles.
+        assert!(matches!(
+            order_folders(&mut conn, Some(a), &[b.id]),
+            Err(LibraryError::Invalid(_))
+        ));
+        assert!(matches!(
+            order_folders(&mut conn, None, &[b.id, b.id]),
+            Err(LibraryError::Invalid(_))
+        ));
+        assert!(matches!(
+            order_folders(&mut conn, None, &[]),
+            Err(LibraryError::Invalid(_))
+        ));
+        assert!(matches!(
+            order_folders(&mut conn, None, &[b.id, 999]),
+            Err(LibraryError::NotFound)
+        ));
+        assert_eq!(level(&conn, None), ["B", "C", "0", "X"]);
+    }
+
     #[test]
     fn ordner_symbol_und_favorit() {
         let conn = open_test();
         let folder = create_folder(&conn, "A", None).unwrap();
-        let set = |icon| update_folder(&conn, folder.id, None, None, Some(icon));
+        let set = |icon| {
+            let change = FolderUpdate {
+                icon: Some(icon),
+                ..Default::default()
+            };
+            update_folder(&conn, folder.id, change)
+        };
         assert_eq!(
             set(Some("gamepad-2")).unwrap().icon.as_deref(),
             Some("gamepad-2")
@@ -1089,6 +1255,17 @@ mod tests {
         assert!(matches!(set(Some("<svg>")), Err(LibraryError::Invalid(_))));
         assert!(matches!(set(Some("")), Err(LibraryError::Invalid(_))));
         assert_eq!(set(None).unwrap().icon, None);
+
+        let color = |color| {
+            let change = FolderUpdate {
+                color: Some(color),
+                ..Default::default()
+            };
+            update_folder(&conn, folder.id, change)
+        };
+        assert_eq!(color(Some("blue")).unwrap().color.as_deref(), Some("blue"));
+        assert!(matches!(color(Some("#fff")), Err(LibraryError::Invalid(_))));
+        assert_eq!(color(None).unwrap().color, None);
 
         let bookmark = create_bookmark(&conn, "https://a.example", None, None).unwrap();
         assert!(!bookmark.favorite);

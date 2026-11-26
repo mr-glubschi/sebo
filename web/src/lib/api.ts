@@ -98,6 +98,8 @@ export interface FolderChanges {
   parent_id?: number | null;
   /** `null` = Standard-Symbol. */
   icon?: string | null;
+  /** `null` = Akzentfarbe. */
+  color?: string | null;
 }
 
 export type BulkAction =
@@ -125,6 +127,9 @@ export const api = {
     request<void>("DELETE", `/folders/${id}?contents=${contents}`),
   deleteFolders: (ids: number[], contents: DeleteContents) =>
     request<void>("POST", "/folders/bulk-delete", { ids, contents }),
+  /** Reihenfolge einer Ebene; Ordner aus anderen Ebenen werden dorthin verschoben. */
+  orderFolders: (parentId: number | null, ids: number[]) =>
+    request<void>("POST", "/folders/order", { parent_id: parentId, ids }),
   mergeFolders: (target: number, sources: number[]) =>
     request<Folder>("POST", "/folders/merge", { target, sources }),
 

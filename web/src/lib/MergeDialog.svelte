@@ -73,7 +73,7 @@
       {#each options as option (option.id)}
         <label class="choice" class:disabled={option.inside}>
           <input type="radio" bind:group={target} value={option.id} disabled={option.inside} />
-          <FolderIcon name={option.path.at(-1)?.icon} />
+          <FolderIcon name={option.path.at(-1)?.icon} color={option.path.at(-1)?.color} />
           <span>{option.name}</span>
         </label>
       {/each}
