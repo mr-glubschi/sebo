@@ -309,12 +309,47 @@ fn subtree(conn: &Connection, id: i64) -> Result<Vec<i64>> {
         .collect::<rusqlite::Result<_>>()?)
 }
 
+/// Höchstzahl an Ordnerebenen, wie beim Import. Begrenzt auch die Rekursion
+/// beim Zusammenführen und hält den Export vollständig.
+pub const MAX_FOLDER_LEVELS: usize = crate::netscape::MAX_DEPTH;
+
+/// Ebenen unterhalb des Ordners (0 = keine Unterordner).
+fn height(conn: &Connection, id: i64) -> Result<usize> {
+    let height: i64 = conn.query_row(
+        "WITH RECURSIVE down(id, n) AS (
+             SELECT ?1, 0
+             UNION ALL
+             SELECT folders.id, down.n + 1 FROM folders JOIN down ON folders.parent_id = down.id
+             WHERE down.n < 1000
+         )
+         SELECT MAX(n) FROM down",
+        params![id],
+        |row| row.get(0),
+    )?;
+    Ok(usize::try_from(height).unwrap_or(0))
+}
+
+/// Passt ein Ordner mit `below` Ebenen darunter in `parent_id`?
+fn check_levels(conn: &Connection, parent_id: Option<i64>, below: usize) -> Result<()> {
+    let level = match parent_id {
+        Some(parent) => depth(conn, parent)? + 1,
+        None => 0,
+    };
+    if level + below >= MAX_FOLDER_LEVELS {
+        return Err(invalid(&format!(
+            "Ordner lassen sich höchstens {MAX_FOLDER_LEVELS} Ebenen tief verschachteln"
+        )));
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Ordner ändern
 
 pub fn create_folder(conn: &Connection, name: &str, parent_id: Option<i64>) -> Result<Folder> {
     let name = clean_folder_name(name)?;
     ensure_folder(conn, parent_id)?;
+    check_levels(conn, parent_id, 0)?;
     conn.execute(
         &format!(
             "INSERT INTO folders (parent_id, name, created_at, position) VALUES (?1, ?2, ?3, {END_POSITION})"
@@ -378,6 +413,7 @@ fn move_folder(conn: &Connection, id: i64, parent_id: Option<i64>) -> Result<()>
             "Ein Ordner kann nicht in sich selbst oder einen seiner Unterordner verschoben werden",
         ));
     }
+    check_levels(conn, parent_id, height(conn, id)?)?;
     conn.execute(
         &format!("UPDATE folders SET parent_id = ?1, position = {END_POSITION} WHERE id = ?2"),
         params![parent_id, id],
@@ -519,6 +555,10 @@ pub fn merge_folders(conn: &mut Connection, target: i64, sources: &[i64]) -> Res
             return Err(invalid(
                 "Ein Ordner kann nicht in einen seiner Unterordner zusammengeführt werden",
             ));
+        }
+        // Die Unterordner der Quelle landen eine Ebene unter dem Ziel.
+        if let Some(below) = height(&tx, source)?.checked_sub(1) {
+            check_levels(&tx, Some(target), below)?;
         }
     }
     for source in sources {
@@ -1169,6 +1209,53 @@ mod tests {
             .filter(|f| f.parent_id == parent)
             .map(|f| f.name)
             .collect()
+    }
+
+    #[test]
+    fn ordner_tiefe_begrenzt() {
+        let mut conn = open_test();
+        let mut chain = vec![create_folder(&conn, "0", None).unwrap().id];
+        for level in 1..MAX_FOLDER_LEVELS {
+            let parent = *chain.last().unwrap();
+            chain.push(
+                create_folder(&conn, &level.to_string(), Some(parent))
+                    .unwrap()
+                    .id,
+            );
+        }
+        let deepest = *chain.last().unwrap();
+        assert!(matches!(
+            create_folder(&conn, "zu tief", Some(deepest)),
+            Err(LibraryError::Invalid(_))
+        ));
+
+        // Ein Ordner mit Unterordner passt nicht unter die vorletzte Ebene.
+        let top = create_folder(&conn, "X", None).unwrap().id;
+        create_folder(&conn, "Y", Some(top)).unwrap();
+        let second_last = chain[MAX_FOLDER_LEVELS - 2];
+        let change = FolderUpdate {
+            parent_id: Some(Some(second_last)),
+            ..Default::default()
+        };
+        assert!(matches!(
+            update_folder(&conn, top, change),
+            Err(LibraryError::Invalid(_))
+        ));
+        assert!(matches!(
+            order_folders(&mut conn, Some(second_last), &[top]),
+            Err(LibraryError::Invalid(_))
+        ));
+        assert!(matches!(
+            // Y käme unter die tiefste Ebene.
+            merge_folders(&mut conn, deepest, &[top]),
+            Err(LibraryError::Invalid(_))
+        ));
+        // Eine Ebene höher geht es.
+        let change = FolderUpdate {
+            parent_id: Some(Some(chain[MAX_FOLDER_LEVELS - 3])),
+            ..Default::default()
+        };
+        update_folder(&conn, top, change).unwrap();
     }
 
     #[test]
