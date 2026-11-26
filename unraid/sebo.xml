@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>sebo</Name>
-  <Repository>ghcr.io/mr-glubschi/sebo:1</Repository>
+  <Repository>ghcr.io/mr-glubschi/sebo:latest</Repository>
   <Registry>https://github.com/mr-glubschi/sebo/pkgs/container/sebo</Registry>
   <Network>bridge</Network>
   <MyIP/>

@@ -57,7 +57,7 @@ Selbst gehostete Bookmark-Verwaltung im Stil von Raindrop, bewusst auf das Minim
 - gzip nur für die Bibliotheks-API und statische Dateien, nicht für `/api/auth/*` (keine Geheimnisse neben reflektierten Daten komprimieren)
 - Container: Alpine, Entrypoint setzt Rechte für `PUID`/`PGID` (Standard 99/100) und wechselt per `su-exec`. Muss mit `--read-only --cap-drop=ALL --cap-add=CHOWN,SETUID,SETGID --security-opt=no-new-privileges` laufen (so im Unraid-Template `unraid/sebo.xml`). Die CI prüft das mit `.github/scripts/smoke-test.sh`.
 - Basis-Images im Dockerfile per Digest, Dependabot aktualisiert sie.
-- Nur amd64, Image-Tags nach Semver über GitHub-Releases. Das Unraid-Template nutzt `:1` und aktualisiert automatisch: Inkompatible Änderungen (Datenformat, Umgebungsvariablen, Volume) nur mit neuer Hauptversion.
+- Nur amd64, Image-Tags nach Semver über GitHub-Releases. Das Unraid-Template nutzt `latest` und aktualisiert automatisch, auch auf neue Hauptversionen. Inkompatible Änderungen (Datenformat, Umgebungsvariablen, Volume) trotzdem nur mit neuer Hauptversion und in den Release-Notizen beschreiben.
 - Kein Subpath-Betrieb
 
 ## Bewusste Entscheidungen

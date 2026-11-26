@@ -48,7 +48,7 @@ Die Vorlage setzt bereits die empfohlenen Sicherheitsoptionen (siehe unten).
 | Feld | Wert |
 |---|---|
 | Name | `sebo` |
-| Repository | `ghcr.io/mr-glubschi/sebo:1` |
+| Repository | `ghcr.io/mr-glubschi/sebo:latest` |
 | Network Type | `bridge` |
 | Port | Container `8080` → Host z. B. `8080` |
 | Pfad | Container `/data` → Host `/mnt/user/appdata/sebo` |
@@ -121,8 +121,8 @@ Die App sollte nicht direkt ins Internet gestellt werden. Für den Zugriff von u
 
 ## Updates
 
-- `:1` (Standard in der Vorlage) bekommt alle Updates ohne inkompatible Änderungen.
-- `latest` bekommt immer die neueste Version, für feste Versionen `:1.2.3` oder `:1.2` verwenden.
+- `latest` (Standard in der Vorlage) bekommt immer die neueste Version, auch neue Hauptversionen. Lies vor einem Update auf eine neue Hauptversion (z. B. 2.0) die Release-Notizen, dort stehen nötige Anpassungen.
+- `:1` bekommt nur Updates ohne inkompatible Änderungen. Für feste Versionen `:1.2.3` oder `:1.2` verwenden.
 - Vor jeder Änderung an der Datenbankstruktur legt SEBO automatisch eine Sicherung an. Ein Wechsel auf eine ältere Version wird nicht unterstützt. Spiele dafür die Sicherung von vor dem Update ein.
 
 ## Backup
