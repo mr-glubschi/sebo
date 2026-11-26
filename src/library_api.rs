@@ -133,6 +133,9 @@ struct UpdateFolder {
     name: Option<String>,
     #[serde(default, deserialize_with = "double_option")]
     parent_id: Option<Option<i64>>,
+    /// `null` = wieder das Standard-Symbol.
+    #[serde(default, deserialize_with = "double_option")]
+    icon: Option<Option<String>>,
 }
 
 async fn update_folder(
@@ -142,7 +145,17 @@ async fn update_folder(
     Json(input): Json<UpdateFolder>,
 ) -> Result<Json<library::Folder>, ApiError> {
     let folder = with_db(&state, move |conn| {
-        library::update_folder(conn, id, input.name.as_deref(), input.parent_id)
+        // Alles oder nichts, falls z. B. das Verschieben abgelehnt wird.
+        let tx = conn.transaction()?;
+        let folder = library::update_folder(
+            &tx,
+            id,
+            input.name.as_deref(),
+            input.parent_id,
+            input.icon.as_ref().map(Option::as_deref),
+        )?;
+        tx.commit()?;
+        Ok(folder)
     })
     .await?;
     Ok(Json(folder))
@@ -204,6 +217,7 @@ struct UpdateBookmark {
     title: Option<String>,
     #[serde(default, deserialize_with = "double_option")]
     folder_id: Option<Option<i64>>,
+    favorite: Option<bool>,
 }
 
 async fn update_bookmark(
@@ -217,8 +231,12 @@ async fn update_bookmark(
             url: input.url.as_deref(),
             title: input.title.as_deref(),
             folder_id: input.folder_id,
+            favorite: input.favorite,
         };
-        library::update_bookmark(conn, id, update)
+        let tx = conn.transaction()?;
+        let outcome = library::update_bookmark(&tx, id, update)?;
+        tx.commit()?;
+        Ok(outcome)
     })
     .await?;
     if outcome.url_changed {

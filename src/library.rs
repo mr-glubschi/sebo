@@ -19,6 +19,8 @@ pub struct Folder {
     #[cfg_attr(test, ts(type = "number | null"))]
     pub parent_id: Option<i64>,
     pub name: String,
+    /// Symbol aus der festen Auswahl im Frontend, `None` = Standard-Ordner.
+    pub icon: Option<String>,
     #[cfg_attr(test, ts(type = "number"))]
     pub created_at: i64,
 }
@@ -67,6 +69,7 @@ pub struct Bookmark {
     /// Adresse des Favicons (vom eigenen Server), falls vorhanden.
     pub icon: Option<String>,
     pub meta_status: MetaStatus,
+    pub favorite: bool,
     #[cfg_attr(test, ts(type = "number"))]
     pub created_at: i64,
     #[cfg_attr(test, ts(type = "number"))]
@@ -154,6 +157,23 @@ pub fn clean_folder_name(input: &str) -> Result<String> {
     Ok(name)
 }
 
+pub const MAX_ICON_CHARS: usize = 40;
+
+/// Name eines Ordner-Symbols: nur `a-z`, `0-9` und `-`. Welche Namen es gibt,
+/// weiß nur das Frontend; unbekannte zeigt es als normalen Ordner.
+pub fn clean_icon(input: &str) -> Result<&str> {
+    let valid = !input.is_empty()
+        && input.len() <= MAX_ICON_CHARS
+        && input
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+    if valid {
+        Ok(input)
+    } else {
+        Err(invalid("Ungültiges Ordner-Symbol"))
+    }
+}
+
 /// Platzhalter-Titel, solange die Seite nicht abgerufen ist: der Host.
 pub fn fallback_title(url: &Url) -> String {
     let host = url.host_str().unwrap_or_default();
@@ -182,8 +202,10 @@ pub fn remove_image_files(images_dir: &Path, ids: &[i64]) {
 // ---------------------------------------------------------------------------
 // Lesen
 
-const BOOKMARK_COLUMNS: &str =
-    "id, folder_id, url, title, has_image, has_icon, meta_status, created_at, updated_at";
+const BOOKMARK_COLUMNS: &str = "id, folder_id, url, title, has_image, has_icon, meta_status, \
+     created_at, updated_at, favorite";
+
+const FOLDER_COLUMNS: &str = "id, parent_id, name, created_at, icon";
 
 fn bookmark_from_row(row: &Row) -> rusqlite::Result<Bookmark> {
     let id: i64 = row.get(0)?;
@@ -201,6 +223,7 @@ fn bookmark_from_row(row: &Row) -> rusqlite::Result<Bookmark> {
         image: has_image.then(|| format!("/api/images/{id}-og.jpg?v={updated_at}")),
         icon: has_icon.then(|| format!("/api/images/{id}-icon.png?v={updated_at}")),
         meta_status: MetaStatus::parse(&status),
+        favorite: row.get(9)?,
         created_at: row.get(7)?,
         updated_at,
     })
@@ -212,14 +235,15 @@ fn folder_from_row(row: &Row) -> rusqlite::Result<Folder> {
         parent_id: row.get(1)?,
         name: row.get(2)?,
         created_at: row.get(3)?,
+        icon: row.get(4)?,
     })
 }
 
 pub fn load(conn: &Connection) -> Result<Library> {
     let folders = conn
-        .prepare(
-            "SELECT id, parent_id, name, created_at FROM folders ORDER BY name COLLATE NOCASE, id",
-        )?
+        .prepare(&format!(
+            "SELECT {FOLDER_COLUMNS} FROM folders ORDER BY name COLLATE NOCASE, id"
+        ))?
         .query_map([], folder_from_row)?
         .collect::<rusqlite::Result<_>>()?;
     let bookmarks = conn
@@ -243,7 +267,7 @@ pub fn get_bookmark(conn: &Connection, id: i64) -> Result<Bookmark> {
 
 pub fn get_folder(conn: &Connection, id: i64) -> Result<Folder> {
     conn.query_row(
-        "SELECT id, parent_id, name, created_at FROM folders WHERE id = ?1",
+        &format!("SELECT {FOLDER_COLUMNS} FROM folders WHERE id = ?1"),
         params![id],
         folder_from_row,
     )
@@ -296,8 +320,16 @@ pub fn update_folder(
     id: i64,
     name: Option<&str>,
     parent_id: Option<Option<i64>>,
+    icon: Option<Option<&str>>,
 ) -> Result<Folder> {
     get_folder(conn, id)?;
+    if let Some(icon) = icon {
+        let icon = icon.map(clean_icon).transpose()?;
+        conn.execute(
+            "UPDATE folders SET icon = ?2 WHERE id = ?1",
+            params![id, icon],
+        )?;
+    }
     if let Some(name) = name {
         let name = clean_folder_name(name)?;
         conn.execute(
@@ -390,11 +422,13 @@ pub fn create_bookmark(
     get_bookmark(conn, conn.last_insert_rowid())
 }
 
+#[derive(Default)]
 pub struct BookmarkUpdate<'a> {
     pub url: Option<&'a str>,
     /// Leerer Titel = wieder automatisch aus der Seite übernehmen.
     pub title: Option<&'a str>,
     pub folder_id: Option<Option<i64>>,
+    pub favorite: Option<bool>,
 }
 
 pub struct UpdateOutcome {
@@ -461,10 +495,20 @@ pub fn update_bookmark(
             params![id, folder_id],
         )?;
     }
-    conn.execute(
-        "UPDATE bookmarks SET updated_at = ?2 WHERE id = ?1",
-        params![id, now_secs()],
-    )?;
+    if let Some(favorite) = update.favorite {
+        conn.execute(
+            "UPDATE bookmarks SET favorite = ?2 WHERE id = ?1",
+            params![id, favorite],
+        )?;
+    }
+    // Nur das Favoriten-Merkmal geändert: `updated_at` bleibt, sonst würde der
+    // Browser die Bilder (Adresse mit `?v=updated_at`) neu laden.
+    if update.url.is_some() || update.title.is_some() || update.folder_id.is_some() {
+        conn.execute(
+            "UPDATE bookmarks SET updated_at = ?2 WHERE id = ?1",
+            params![id, now_secs()],
+        )?;
+    }
     Ok(UpdateOutcome {
         bookmark: get_bookmark(conn, id)?,
         refetch,
@@ -763,6 +807,7 @@ mod tests {
             url: None,
             title: Some("Mein Titel"),
             folder_id: Some(None),
+            favorite: None,
         };
         let outcome = update_bookmark(&conn, bookmark.id, update).unwrap();
         assert!(!outcome.refetch && !outcome.url_changed);
@@ -780,8 +825,7 @@ mod tests {
         // Neue URL: neu abrufen; ein alter Abruf für die alte URL wird verworfen.
         let update = BookmarkUpdate {
             url: Some("https://doc.rust-lang.org"),
-            title: None,
-            folder_id: None,
+            ..Default::default()
         };
         let outcome = update_bookmark(&conn, bookmark.id, update).unwrap();
         assert!(outcome.refetch && outcome.url_changed);
@@ -822,11 +866,11 @@ mod tests {
 
         // Keine Kreise.
         assert!(matches!(
-            update_folder(&conn, a.id, None, Some(Some(c.id))),
+            update_folder(&conn, a.id, None, Some(Some(c.id)), None),
             Err(LibraryError::Invalid(_))
         ));
         assert!(matches!(
-            update_folder(&conn, a.id, None, Some(Some(a.id))),
+            update_folder(&conn, a.id, None, Some(Some(a.id)), None),
             Err(LibraryError::Invalid(_))
         ));
         assert!(matches!(

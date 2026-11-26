@@ -9,4 +9,4 @@ image: string | null,
 /**
  * Adresse des Favicons (vom eigenen Server), falls vorhanden.
  */
-icon: string | null, meta_status: MetaStatus, created_at: number, updated_at: number, };
+icon: string | null, meta_status: MetaStatus, favorite: boolean, created_at: number, updated_at: number, };

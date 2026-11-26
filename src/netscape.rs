@@ -477,6 +477,7 @@ mod tests {
             id: 1,
             parent_id: None,
             name: "<Ordner> & \"Zitat\"".into(),
+            icon: None,
             created_at: 5,
         }];
         let bookmark = |id, folder_id, url: &str, title: &str| Bookmark {
@@ -487,6 +488,7 @@ mod tests {
             image: None,
             icon: None,
             meta_status: MetaStatus::Done,
+            favorite: false,
             created_at: 10,
             updated_at: 11,
         };
