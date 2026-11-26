@@ -52,7 +52,7 @@ Selbst gehostete Bookmark-Verwaltung im Stil von Raindrop, bewusst auf das Minim
 - gzip nur für die Bibliotheks-API und statische Dateien, nicht für `/api/auth/*` (keine Geheimnisse neben reflektierten Daten komprimieren)
 - Container: Alpine, Entrypoint setzt Rechte für `PUID`/`PGID` (Standard 99/100) und wechselt per `su-exec`. Muss mit `--read-only --cap-drop=ALL --cap-add=CHOWN,SETUID,SETGID --security-opt=no-new-privileges` laufen (so im Unraid-Template `unraid/sebo.xml`). Die CI prüft das mit `.github/scripts/smoke-test.sh`.
 - Basis-Images im Dockerfile per Digest, Dependabot aktualisiert sie.
-- Nur amd64, Image-Tags nach Semver über GitHub-Releases
+- Nur amd64, Image-Tags nach Semver über GitHub-Releases. Das Unraid-Template nutzt `:1` und aktualisiert automatisch: Inkompatible Änderungen (Datenformat, Umgebungsvariablen, Volume) nur mit neuer Hauptversion.
 - Kein Subpath-Betrieb
 
 ## Bewusste Entscheidungen
@@ -60,6 +60,7 @@ Selbst gehostete Bookmark-Verwaltung im Stil von Raindrop, bewusst auf das Minim
 - Nicht umgesetzt: `PASSWORD_FILE`, iOS-Kurzbefehle mit API-Token, arm64-Image, manuelle Sortierung, Offline-Modus, Subpath-Betrieb. Lange Listen werden schrittweise gerendert statt virtuell gescrollt.
 - Die Passwort-Variable bleibt im Prozess (Entfernen bringt nichts, `docker inspect` zeigt sie ohnehin). Wer Klartext vermeiden will, nutzt `PASSWORD_HASH`.
 - `reset-2fa` zeigt den QR-Code in der Konsole des Befehls, nicht im Log.
+- Sitzungen laufen nach 30 Tagen ohne Nutzung ab. Ein geändertes Passwort meldet bestehende Sitzungen bisher nicht ab; alle abmelden geht nur über `reset-2fa`.
 - Wiederherstellungscodes: Crockford-Base32, 12 Zeichen, O/0 und I/L/1 werden bei der Eingabe korrigiert.
 - rustls mit `ring` + `webpki-roots` (aws-lc-rs bräuchte CMake/NASM im Build).
 - Status `skipped` = interne Adresse, gespeichert, aber nicht abgerufen. `title_auto` = Titel darf vom Abruf ersetzt werden; leerer Titel setzt sofort den Hostnamen.
