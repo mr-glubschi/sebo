@@ -366,8 +366,139 @@ pub enum DeleteContents {
 /// Löscht einen Ordner. Gibt die IDs gelöschter Bookmarks zurück, damit
 /// deren Bilder entfernt werden können.
 pub fn delete_folder(conn: &mut Connection, id: i64, contents: DeleteContents) -> Result<Vec<i64>> {
-    let folder = get_folder(conn, id)?;
     let tx = conn.transaction()?;
+    let deleted = delete_folder_in(&tx, id, contents)?;
+    tx.commit()?;
+    Ok(deleted)
+}
+
+/// Höchstzahl an IDs pro Sammelanfrage (so viele Bookmarks erlaubt der Import).
+pub const MAX_BULK_IDS: usize = 50_000;
+
+fn check_bulk(ids: &[i64]) -> Result<()> {
+    if ids.is_empty() {
+        return Err(invalid("Nichts ausgewählt"));
+    }
+    if ids.len() > MAX_BULK_IDS {
+        return Err(invalid("Zu viele Einträge auf einmal"));
+    }
+    Ok(())
+}
+
+/// Anzahl der übergeordneten Ordner.
+fn depth(conn: &Connection, id: i64) -> Result<usize> {
+    let depth: i64 = conn.query_row(
+        "WITH RECURSIVE up(id, n) AS (
+             SELECT parent_id, 0 FROM folders WHERE id = ?1
+             UNION ALL
+             SELECT folders.parent_id, up.n + 1 FROM folders JOIN up ON folders.id = up.id
+         )
+         SELECT COALESCE(MAX(n), 0) FROM up",
+        params![id],
+        |row| row.get(0),
+    )?;
+    Ok(usize::try_from(depth).unwrap_or(0))
+}
+
+/// Vorhandene Ordner aus `ids`, ohne Doppelte, die tiefsten zuerst.
+fn deepest_first(conn: &Connection, ids: &[i64]) -> Result<Vec<i64>> {
+    let mut found = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for &id in ids {
+        if seen.insert(id) && get_folder(conn, id).is_ok() {
+            found.push((depth(conn, id)?, id));
+        }
+    }
+    found.sort_by(|a, b| b.cmp(a));
+    Ok(found.into_iter().map(|(_, id)| id).collect())
+}
+
+/// Löscht mehrere Ordner in einer Transaktion. Die tiefsten zuerst: So landet
+/// der Inhalt bei „nach oben verschieben“ über dem obersten gelöschten Ordner.
+/// Gibt die IDs gelöschter Bookmarks zurück.
+pub fn delete_folders(
+    conn: &mut Connection,
+    ids: &[i64],
+    contents: DeleteContents,
+) -> Result<Vec<i64>> {
+    check_bulk(ids)?;
+    let tx = conn.transaction()?;
+    let mut deleted = Vec::new();
+    for id in deepest_first(&tx, ids)? {
+        match delete_folder_in(&tx, id, contents) {
+            Ok(ids) => deleted.extend(ids),
+            // Schon mit einem anderen gelöscht.
+            Err(LibraryError::NotFound) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    tx.commit()?;
+    Ok(deleted)
+}
+
+/// Führt Ordner in `target` zusammen: Bookmarks und Unterordner wandern
+/// hinein, gleichnamige Unterordner werden ebenfalls zusammengeführt (wie
+/// beim Import). Die Quellen werden danach gelöscht.
+pub fn merge_folders(conn: &mut Connection, target: i64, sources: &[i64]) -> Result<Folder> {
+    check_bulk(sources)?;
+    let tx = conn.transaction()?;
+    get_folder(&tx, target)?;
+    if sources.contains(&target) {
+        return Err(invalid("Der Zielordner kann nicht zugleich Quelle sein"));
+    }
+    let sources = deepest_first(&tx, sources)?;
+    for &source in &sources {
+        if subtree(&tx, source)?.contains(&target) {
+            return Err(invalid(
+                "Ein Ordner kann nicht in einen seiner Unterordner zusammengeführt werden",
+            ));
+        }
+    }
+    for source in sources {
+        // Tiefere Quellen zuerst: Eine Quelle in einer anderen Quelle ist noch
+        // da, wenn sie an der Reihe ist.
+        if get_folder(&tx, source).is_ok() {
+            merge_into(&tx, source, target)?;
+        }
+    }
+    let folder = get_folder(&tx, target)?;
+    tx.commit()?;
+    Ok(folder)
+}
+
+fn merge_into(tx: &Connection, source: i64, target: i64) -> Result<()> {
+    tx.execute(
+        "UPDATE bookmarks SET folder_id = ?2 WHERE folder_id = ?1",
+        params![source, target],
+    )?;
+    let children: Vec<(i64, String)> = tx
+        .prepare("SELECT id, name FROM folders WHERE parent_id = ?1")?
+        .query_map(params![source], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    for (child, name) in children {
+        let same: Option<i64> = tx
+            .query_row(
+                "SELECT id FROM folders WHERE parent_id = ?1 AND name = ?2 ORDER BY id LIMIT 1",
+                params![target, name],
+                |row| row.get(0),
+            )
+            .optional()?;
+        match same {
+            Some(same) => merge_into(tx, child, same)?,
+            None => {
+                tx.execute(
+                    "UPDATE folders SET parent_id = ?2 WHERE id = ?1",
+                    params![child, target],
+                )?;
+            }
+        }
+    }
+    tx.execute("DELETE FROM folders WHERE id = ?1", params![source])?;
+    Ok(())
+}
+
+fn delete_folder_in(tx: &Connection, id: i64, contents: DeleteContents) -> Result<Vec<i64>> {
+    let folder = get_folder(tx, id)?;
     let deleted = match contents {
         DeleteContents::MoveUp => {
             tx.execute(
@@ -381,7 +512,7 @@ pub fn delete_folder(conn: &mut Connection, id: i64, contents: DeleteContents) -
             Vec::new()
         }
         DeleteContents::Delete => {
-            let folders = subtree(&tx, id)?;
+            let folders = subtree(tx, id)?;
             let mut ids = Vec::new();
             for folder_id in &folders {
                 let mut stmt = tx.prepare("SELECT id FROM bookmarks WHERE folder_id = ?1")?;
@@ -395,7 +526,6 @@ pub fn delete_folder(conn: &mut Connection, id: i64, contents: DeleteContents) -
     };
     // ON DELETE CASCADE entfernt Unterordner und deren Bookmarks.
     tx.execute("DELETE FROM folders WHERE id = ?1", params![id])?;
-    tx.commit()?;
     Ok(deleted)
 }
 
@@ -521,6 +651,53 @@ pub fn delete_bookmark(conn: &Connection, id: i64) -> Result<()> {
         0 => Err(LibraryError::NotFound),
         _ => Ok(()),
     }
+}
+
+/// Was mit mehreren ausgewählten Bookmarks passiert.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BulkAction {
+    Move(Option<i64>),
+    Delete,
+    Favorite(bool),
+}
+
+/// Ändert mehrere Bookmarks in einer Transaktion. Unbekannte IDs werden
+/// übersprungen. Gibt die Zahl der geänderten und die IDs der gelöschten zurück.
+pub fn bulk_bookmarks(
+    conn: &mut Connection,
+    ids: &[i64],
+    action: BulkAction,
+) -> Result<(usize, Vec<i64>)> {
+    check_bulk(ids)?;
+    let tx = conn.transaction()?;
+    if let BulkAction::Move(folder_id) = action {
+        ensure_folder(&tx, folder_id)?;
+    }
+    let mut changed = 0;
+    let mut deleted = Vec::new();
+    {
+        // updated_at bleibt beim Verschieben und Markieren: sonst laden alle Bilder neu.
+        let mut stmt = tx.prepare(match action {
+            BulkAction::Move(_) => "UPDATE bookmarks SET folder_id = ?2 WHERE id = ?1",
+            BulkAction::Favorite(_) => "UPDATE bookmarks SET favorite = ?2 WHERE id = ?1",
+            BulkAction::Delete => "DELETE FROM bookmarks WHERE id = ?1",
+        })?;
+        for &id in ids {
+            let count = match action {
+                BulkAction::Move(folder_id) => stmt.execute(params![id, folder_id])?,
+                BulkAction::Favorite(favorite) => stmt.execute(params![id, favorite])?,
+                BulkAction::Delete => stmt.execute(params![id])?,
+            };
+            if count > 0 {
+                changed += 1;
+                if action == BulkAction::Delete {
+                    deleted.push(id);
+                }
+            }
+        }
+    }
+    tx.commit()?;
+    Ok((changed, deleted))
 }
 
 pub fn mark_for_refresh(conn: &Connection, id: i64) -> Result<Bookmark> {
@@ -898,5 +1075,168 @@ mod tests {
         assert_eq!(get_folder(&conn, c.id), Err(LibraryError::NotFound));
         assert_eq!(get_bookmark(&conn, in_c.id), Err(LibraryError::NotFound));
         assert!(load(&conn).unwrap().bookmarks.is_empty());
+    }
+
+    #[test]
+    fn ordner_symbol_und_favorit() {
+        let conn = open_test();
+        let folder = create_folder(&conn, "A", None).unwrap();
+        let set = |icon| update_folder(&conn, folder.id, None, None, Some(icon));
+        assert_eq!(
+            set(Some("gamepad-2")).unwrap().icon.as_deref(),
+            Some("gamepad-2")
+        );
+        assert!(matches!(set(Some("<svg>")), Err(LibraryError::Invalid(_))));
+        assert!(matches!(set(Some("")), Err(LibraryError::Invalid(_))));
+        assert_eq!(set(None).unwrap().icon, None);
+
+        let bookmark = create_bookmark(&conn, "https://a.example", None, None).unwrap();
+        assert!(!bookmark.favorite);
+        let update = BookmarkUpdate {
+            favorite: Some(true),
+            ..Default::default()
+        };
+        let updated = update_bookmark(&conn, bookmark.id, update)
+            .unwrap()
+            .bookmark;
+        assert!(updated.favorite);
+        // Nur markiert: Bildadressen bleiben gleich.
+        assert_eq!(updated.updated_at, bookmark.updated_at);
+    }
+
+    #[test]
+    fn mehrere_bookmarks_aendern() {
+        let mut conn = open_test();
+        let folder = create_folder(&conn, "Ziel", None).unwrap();
+        let ids: Vec<i64> = (0..3)
+            .map(|i| {
+                create_bookmark(&conn, &format!("https://{i}.example"), None, None)
+                    .unwrap()
+                    .id
+            })
+            .collect();
+
+        let (changed, _) = bulk_bookmarks(
+            &mut conn,
+            &[ids[0], ids[1], 999],
+            BulkAction::Favorite(true),
+        )
+        .unwrap();
+        assert_eq!(changed, 2);
+        let (changed, _) =
+            bulk_bookmarks(&mut conn, &ids, BulkAction::Move(Some(folder.id))).unwrap();
+        assert_eq!(changed, 3);
+        let library = load(&conn).unwrap();
+        assert!(
+            library
+                .bookmarks
+                .iter()
+                .all(|b| b.folder_id == Some(folder.id))
+        );
+        assert_eq!(library.bookmarks.iter().filter(|b| b.favorite).count(), 2);
+
+        // Unbekannter Zielordner: nichts ändert sich.
+        assert!(matches!(
+            bulk_bookmarks(&mut conn, &ids, BulkAction::Move(Some(999))),
+            Err(LibraryError::Invalid(_))
+        ));
+        assert!(matches!(
+            bulk_bookmarks(&mut conn, &[], BulkAction::Delete),
+            Err(LibraryError::Invalid(_))
+        ));
+
+        let (changed, mut deleted) =
+            bulk_bookmarks(&mut conn, &[ids[2], ids[0], ids[0]], BulkAction::Delete).unwrap();
+        deleted.sort();
+        assert_eq!((changed, deleted), (2, vec![ids[0], ids[2]]));
+        assert_eq!(load(&conn).unwrap().bookmarks.len(), 1);
+    }
+
+    #[test]
+    fn mehrere_ordner_loeschen() {
+        let mut conn = open_test();
+        // Oben > A > B, beide A und B ausgewählt.
+        let top = create_folder(&conn, "Oben", None).unwrap();
+        let a = create_folder(&conn, "A", Some(top.id)).unwrap();
+        let b = create_folder(&conn, "B", Some(a.id)).unwrap();
+        let c = create_folder(&conn, "C", Some(b.id)).unwrap();
+        let in_a = create_bookmark(&conn, "https://a.example", None, Some(a.id)).unwrap();
+        let in_b = create_bookmark(&conn, "https://b.example", None, Some(b.id)).unwrap();
+
+        // Nach oben: Inhalt beider landet in „Oben“.
+        delete_folders(&mut conn, &[a.id, b.id], DeleteContents::MoveUp).unwrap();
+        assert_eq!(get_folder(&conn, c.id).unwrap().parent_id, Some(top.id));
+        assert_eq!(
+            get_bookmark(&conn, in_a.id).unwrap().folder_id,
+            Some(top.id)
+        );
+        assert_eq!(
+            get_bookmark(&conn, in_b.id).unwrap().folder_id,
+            Some(top.id)
+        );
+
+        // Mitlöschen, auch wenn ein Ordner im anderen liegt.
+        let d = create_folder(&conn, "D", Some(c.id)).unwrap();
+        let in_d = create_bookmark(&conn, "https://d.example", None, Some(d.id)).unwrap();
+        let mut deleted =
+            delete_folders(&mut conn, &[d.id, top.id, 999], DeleteContents::Delete).unwrap();
+        deleted.sort();
+        assert_eq!(deleted, vec![in_a.id, in_b.id, in_d.id]);
+        assert!(load(&conn).unwrap().folders.is_empty());
+    }
+
+    #[test]
+    fn ordner_zusammenfuehren() {
+        let mut conn = open_test();
+        let target = create_folder(&conn, "Ziel", None).unwrap();
+        let docs = create_folder(&conn, "Doku", Some(target.id)).unwrap();
+        let x = create_folder(&conn, "X", None).unwrap();
+        let x_docs = create_folder(&conn, "Doku", Some(x.id)).unwrap();
+        let x_other = create_folder(&conn, "Anderes", Some(x.id)).unwrap();
+        let y = create_folder(&conn, "Y", Some(x.id)).unwrap();
+        let in_x = create_bookmark(&conn, "https://x.example", None, Some(x.id)).unwrap();
+        let in_docs = create_bookmark(&conn, "https://d.example", None, Some(x_docs.id)).unwrap();
+        let in_y = create_bookmark(&conn, "https://y.example", None, Some(y.id)).unwrap();
+
+        // Ziel in einer Quelle oder selbst Quelle: abgelehnt.
+        assert!(matches!(
+            merge_folders(&mut conn, x_docs.id, &[x.id]),
+            Err(LibraryError::Invalid(_))
+        ));
+        assert!(matches!(
+            merge_folders(&mut conn, target.id, &[target.id]),
+            Err(LibraryError::Invalid(_))
+        ));
+        assert!(matches!(
+            merge_folders(&mut conn, 999, &[x.id]),
+            Err(LibraryError::NotFound)
+        ));
+
+        // Y liegt in X und ist auch Quelle.
+        merge_folders(&mut conn, target.id, &[x.id, y.id]).unwrap();
+        let library = load(&conn).unwrap();
+        let ids: Vec<i64> = library.folders.iter().map(|f| f.id).collect();
+        let mut expected = vec![target.id, docs.id, x_other.id];
+        expected.sort();
+        let mut ids = ids;
+        ids.sort();
+        assert_eq!(ids, expected);
+        assert_eq!(
+            get_folder(&conn, x_other.id).unwrap().parent_id,
+            Some(target.id)
+        );
+        assert_eq!(
+            get_bookmark(&conn, in_x.id).unwrap().folder_id,
+            Some(target.id)
+        );
+        assert_eq!(
+            get_bookmark(&conn, in_y.id).unwrap().folder_id,
+            Some(target.id)
+        );
+        // Gleichnamiger Unterordner wurde zusammengeführt.
+        assert_eq!(
+            get_bookmark(&conn, in_docs.id).unwrap().folder_id,
+            Some(docs.id)
+        );
     }
 }

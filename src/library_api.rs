@@ -27,7 +27,10 @@ pub fn router() -> Router<AppState> {
         .route("/library", get(load))
         .route("/folders", post(create_folder))
         .route("/folders/{id}", patch(update_folder).delete(delete_folder))
+        .route("/folders/bulk-delete", post(delete_folders))
+        .route("/folders/merge", post(merge_folders))
         .route("/bookmarks", post(create_bookmark))
+        .route("/bookmarks/bulk", post(bulk_bookmarks))
         .route(
             "/bookmarks/{id}",
             patch(update_bookmark).delete(delete_bookmark),
@@ -167,28 +170,114 @@ struct DeleteFolderQuery {
     contents: String,
 }
 
+fn delete_contents(value: &str) -> Result<DeleteContents, ApiError> {
+    match value {
+        "delete" => Ok(DeleteContents::Delete),
+        "move" => Ok(DeleteContents::MoveUp),
+        _ => Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "contents muss delete oder move sein",
+        )),
+    }
+}
+
 async fn delete_folder(
     _: Authenticated,
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Query(query): Query<DeleteFolderQuery>,
 ) -> Result<StatusCode, ApiError> {
-    let contents = match query.contents.as_str() {
-        "delete" => DeleteContents::Delete,
-        "move" => DeleteContents::MoveUp,
-        _ => {
-            return Err(ApiError::new(
-                StatusCode::BAD_REQUEST,
-                "contents muss delete oder move sein",
-            ));
-        }
-    };
+    let contents = delete_contents(&query.contents)?;
     let deleted = with_db(&state, move |conn| {
         library::delete_folder(conn, id, contents)
     })
     .await?;
     library::remove_image_files(&state.images_dir, &deleted);
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct DeleteFolders {
+    ids: Vec<i64>,
+    contents: String,
+}
+
+async fn delete_folders(
+    _: Authenticated,
+    State(state): State<AppState>,
+    Json(input): Json<DeleteFolders>,
+) -> Result<StatusCode, ApiError> {
+    let contents = delete_contents(&input.contents)?;
+    let deleted = with_db(&state, move |conn| {
+        library::delete_folders(conn, &input.ids, contents)
+    })
+    .await?;
+    library::remove_image_files(&state.images_dir, &deleted);
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct MergeFolders {
+    target: i64,
+    sources: Vec<i64>,
+}
+
+async fn merge_folders(
+    _: Authenticated,
+    State(state): State<AppState>,
+    Json(input): Json<MergeFolders>,
+) -> Result<Json<library::Folder>, ApiError> {
+    let folder = with_db(&state, move |conn| {
+        library::merge_folders(conn, input.target, &input.sources)
+    })
+    .await?;
+    Ok(Json(folder))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum BulkActionName {
+    Move,
+    Delete,
+    Favorite,
+    Unfavorite,
+}
+
+#[derive(Deserialize)]
+struct BulkBookmarks {
+    ids: Vec<i64>,
+    action: BulkActionName,
+    /// Nur bei `move`: Zielordner, `null` = Unsortiert.
+    #[serde(default, deserialize_with = "double_option")]
+    folder_id: Option<Option<i64>>,
+}
+
+#[derive(Serialize)]
+struct BulkResult {
+    changed: usize,
+}
+
+async fn bulk_bookmarks(
+    _: Authenticated,
+    State(state): State<AppState>,
+    Json(input): Json<BulkBookmarks>,
+) -> Result<Json<BulkResult>, ApiError> {
+    let action = match (input.action, input.folder_id) {
+        (BulkActionName::Move, Some(folder_id)) => library::BulkAction::Move(folder_id),
+        (BulkActionName::Move, None) => {
+            return Err(ApiError::new(StatusCode::BAD_REQUEST, "folder_id fehlt"));
+        }
+        (BulkActionName::Delete, _) => library::BulkAction::Delete,
+        (BulkActionName::Favorite, _) => library::BulkAction::Favorite(true),
+        (BulkActionName::Unfavorite, _) => library::BulkAction::Favorite(false),
+    };
+    let ids = input.ids;
+    let (changed, deleted) = with_db(&state, move |conn| {
+        library::bulk_bookmarks(conn, &ids, action)
+    })
+    .await?;
+    library::remove_image_files(&state.images_dir, &deleted);
+    Ok(Json(BulkResult { changed }))
 }
 
 #[derive(Deserialize)]
@@ -588,6 +677,77 @@ mod tests {
 
         let (status, _) = call(&state, "DELETE", &path, &cookie, None).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn sammelaktionen_ueber_die_api() {
+        let state = test_state().await;
+        let cookie = login(&state).await;
+        let post = |path: &'static str, body: Value| {
+            let state = state.clone();
+            let cookie = cookie.clone();
+            async move { call(&state, "POST", path, &cookie, Some(body)).await }
+        };
+
+        let (_, a) = post("/api/folders", json!({ "name": "A" })).await;
+        let (_, b) = post("/api/folders", json!({ "name": "B" })).await;
+        let (a, b) = (a["id"].as_i64().unwrap(), b["id"].as_i64().unwrap());
+        let mut ids = Vec::new();
+        for url in ["https://1.example", "https://2.example"] {
+            let (_, bookmark) = post("/api/bookmarks", json!({ "url": url })).await;
+            ids.push(bookmark["id"].as_i64().unwrap());
+        }
+
+        let (status, result) = post(
+            "/api/bookmarks/bulk",
+            json!({ "ids": ids, "action": "move", "folder_id": b }),
+        )
+        .await;
+        assert_eq!(
+            (status, result["changed"].as_i64()),
+            (StatusCode::OK, Some(2))
+        );
+        let (status, _) = post(
+            "/api/bookmarks/bulk",
+            json!({ "ids": ids, "action": "move" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (status, _) = post(
+            "/api/bookmarks/bulk",
+            json!({ "ids": ids, "action": "favorite" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(stored(&state, ids[0]).await.favorite);
+
+        let (status, _) = call(
+            &state,
+            "PATCH",
+            &format!("/api/folders/{a}"),
+            &cookie,
+            Some(json!({ "icon": "music" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, folder) =
+            post("/api/folders/merge", json!({ "target": a, "sources": [b] })).await;
+        assert_eq!(
+            (status, folder["icon"].as_str()),
+            (StatusCode::OK, Some("music"))
+        );
+        assert_eq!(stored(&state, ids[1]).await.folder_id, Some(a));
+
+        let (status, _) = post(
+            "/api/folders/bulk-delete",
+            json!({ "ids": [a], "contents": "delete" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let (_, library) = call(&state, "GET", "/api/library", &cookie, None).await;
+        assert_eq!(library["bookmarks"].as_array().unwrap().len(), 0);
+        assert_eq!(library["folders"].as_array().unwrap().len(), 0);
     }
 
     #[tokio::test]
