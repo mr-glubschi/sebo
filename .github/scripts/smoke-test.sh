@@ -78,4 +78,33 @@ curl -fsS -b "$JAR" "$BASE/api/auth/status" | grep -q '"authenticated":false' ||
 echo "ok: reset-2fa"
 
 docker rm -f sebo >/dev/null
+
+# Hintergrund-Abruf unter Linux: 40 nicht erreichbare Adressen müssen zügig
+# als fehlgeschlagen enden (Verbindung wird sofort abgewiesen).
+DATA2="$(mktemp -d)"
+chmod 755 "$DATA2"
+docker run -d --name sebo2 -p 127.0.0.1:8081:8080   -e PASSWORD=rauchtest-passwort-123 -e ALLOW_PRIVATE_URLS=true   -v "$DATA2:/data" "$IMAGE" >/dev/null
+BASE2="http://127.0.0.1:8081"
+for _ in $(seq 1 30); do
+  curl -fsS "$BASE2/healthz" >/dev/null 2>&1 && break
+  sleep 1
+done
+sleep 1
+OTP2="$(docker logs sebo2 2>&1 | grep -o 'otpauth://[^ ]*' | head -1)"
+JAR2="$(mktemp)"
+curl -fsS -c "$JAR2" -H "Origin: $BASE2" -H 'Content-Type: application/json'   -d "{\"password\":\"rauchtest-passwort-123\",\"code\":\"$(node .github/scripts/totp.mjs "$OTP2")\"}"   "$BASE2/api/auth/login" >/dev/null || { docker logs sebo2; fail "Login für Abruftest"; }
+FILE="$(mktemp)"
+{
+  echo "<DL>"
+  for i in $(seq 1 40); do echo "<DT><A HREF=\"http://127.0.0.1:1/seite$i\">Seite $i</A>"; done
+  echo "</DL>"
+} > "$FILE"
+curl -fsS -b "$JAR2" -H "Origin: $BASE2" -H 'Content-Type: text/html' --data-binary "@$FILE"   "$BASE2/api/import" | grep -q '"bookmarks":40' || fail "Import für Abruftest"
+START=$(date +%s)
+while curl -fsS -b "$JAR2" "$BASE2/api/library" | grep -q '"pending"'; do
+  [ $(( $(date +%s) - START )) -lt 60 ] || fail "Abruf von 40 nicht erreichbaren Adressen dauert über 60 s"
+  sleep 1
+done
+echo "ok: 40 nicht erreichbare Adressen in $(( $(date +%s) - START )) s abgearbeitet"
+docker rm -f sebo2 >/dev/null
 echo "Rauchtest bestanden"
