@@ -217,7 +217,8 @@
     if (event.key === "Escape" && menuOpen) {
       menuOpen = false;
       // Fokus zurück auf den Menü-Knopf statt ins Leere.
-      document.querySelector<HTMLElement>("button.menu")?.focus();
+      // Erst nach dem Aktualisieren: Vorher ist der Inhalt noch inert.
+      tick().then(() => document.querySelector<HTMLElement>("button.menu")?.focus());
     }
     // „/“ springt in die Suche
     const typing = (event.target as Element).closest("input, textarea, select, [contenteditable]");
