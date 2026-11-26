@@ -102,6 +102,57 @@ export function folderOptions(tree: Tree, exclude: Set<number> = new Set()): Fol
   return result;
 }
 
+/** Abschnitt der gruppierten Ansicht: `count` Bookmarks ab `start`. */
+export interface BookmarkGroup {
+  /** `null` = Unsortiert. */
+  folder: Folder | null;
+  /** Pfad ab dem Ausgangsordner (bzw. der obersten Ebene) bis zum Ordner. */
+  path: Folder[];
+  start: number;
+  count: number;
+}
+
+/**
+ * Ordnet Bookmarks nach Ordnern in Baumreihenfolge (jeder Ordner, dann seine
+ * Unterordner), Unsortiert zuletzt. Innerhalb eines Ordners bleibt die bisherige
+ * Reihenfolge (Sortierung oder Suchrang). `root`: Ausgangsordner, die Pfade beginnen dort.
+ */
+export function groupByFolder(
+  bookmarks: Bookmark[],
+  tree: Tree,
+  root: number | null,
+): { ordered: Bookmark[]; groups: BookmarkGroup[] } {
+  const rank = new Map<number, number>();
+  const walk = (parent: number) => {
+    rank.set(parent, rank.size);
+    for (const child of tree.children.get(parent) ?? []) if (!rank.has(child.id)) walk(child.id);
+  };
+  if (root !== null) walk(root);
+  for (const folder of tree.children.get(null) ?? []) if (!rank.has(folder.id)) walk(folder.id);
+  // Unsortiert und unbekannte Ordner ans Ende.
+  const last = rank.size;
+  const key = (b: Bookmark) => (b.folder_id === null ? last : (rank.get(b.folder_id) ?? last));
+  const ordered = bookmarks
+    .map((bookmark, index) => ({ bookmark, index, rank: key(bookmark) }))
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map((entry) => entry.bookmark);
+
+  const groups: BookmarkGroup[] = [];
+  ordered.forEach((bookmark, index) => {
+    const folder = bookmark.folder_id === null ? undefined : tree.byId.get(bookmark.folder_id);
+    const previous = groups.at(-1);
+    if (previous && (previous.folder?.id ?? null) === (folder?.id ?? null)) {
+      previous.count++;
+      return;
+    }
+    let path = folder ? folderPath(tree, folder.id) : [];
+    const from = root === null ? -1 : path.findIndex((f) => f.id === root);
+    if (from > 0) path = path.slice(from);
+    groups.push({ folder: folder ?? null, path, start: index, count: 1 });
+  });
+  return { ordered, groups };
+}
+
 export type ViewMode = "cards" | "list" | "compact";
 export type SortMode = "new" | "old" | "name";
 

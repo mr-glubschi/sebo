@@ -1,8 +1,10 @@
 <script lang="ts">
   import type { Bookmark } from "./bindings/Bookmark";
+  import type { Folder } from "./bindings/Folder";
   import { draggable, drag } from "./drag.svelte";
+  import FolderIcon from "./FolderIcon.svelte";
   import Icon from "./Icon.svelte";
-  import { host, type ViewMode } from "./library";
+  import { host, type BookmarkGroup, type ViewMode } from "./library";
   import type { Part } from "./search";
   import Thumb from "./Thumb.svelte";
 
@@ -23,6 +25,10 @@
     onstart: (bookmark: Bookmark) => void;
     /** Kontextmenü: Rechtsklick oder ⋯-Knopf (dann mit `trigger`). */
     onmenu: (bookmark: Bookmark, event: MouseEvent, trigger?: HTMLElement) => void;
+    /** Abschnitte nach Ordnern (gruppierte Ansicht); `bookmarks` ist danach geordnet. */
+    groups?: BookmarkGroup[];
+    /** Abschnittsüberschrift angeklickt: Ordner öffnen (`null` = Unsortiert). */
+    onopen?: (folder: Folder | null) => void;
   }
 
   let {
@@ -36,6 +42,8 @@
     onselect,
     onstart,
     onmenu,
+    groups,
+    onopen,
   }: Props = $props();
 
   function contextmenu(bookmark: Bookmark, event: MouseEvent) {
@@ -77,98 +85,202 @@
   });
 </script>
 
-<ul class={view} class:selecting>
-  {#each shown as bookmark (bookmark.id)}
-    {@const parts = highlights?.get(bookmark.id)}
-    {@const isSelected = selecting && selected.has(bookmark.id)}
-    <li
-      use:draggable={{ kind: "bookmark", id: bookmark.id, label: bookmark.title }}
-      class:dragged={drag.item?.kind === "bookmark" &&
-        (drag.item.id === bookmark.id || (isSelected && selected.has(drag.item.id)))}
-      class:selected={isSelected}
-      oncontextmenu={(event) => contextmenu(bookmark, event)}
+{#snippet item(bookmark: Bookmark)}
+  {@const parts = highlights?.get(bookmark.id)}
+  {@const isSelected = selecting && selected.has(bookmark.id)}
+  <li
+    use:draggable={{ kind: "bookmark", id: bookmark.id, label: bookmark.title }}
+    class:dragged={drag.item?.kind === "bookmark" &&
+      (drag.item.id === bookmark.id || (isSelected && selected.has(drag.item.id)))}
+    class:selected={isSelected}
+    oncontextmenu={(event) => contextmenu(bookmark, event)}
+  >
+    <!-- URL ist vom Server geprüft (nur http/https). -->
+    <a
+      href={bookmark.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={bookmark.url}
+      role={selecting ? "checkbox" : undefined}
+      aria-checked={selecting ? isSelected : undefined}
+      onclick={(event) => click(bookmark, event)}
     >
-      <!-- URL ist vom Server geprüft (nur http/https). -->
-      <a
-        href={bookmark.url}
-        target="_blank"
-        rel="noopener noreferrer"
-        title={bookmark.url}
-        role={selecting ? "checkbox" : undefined}
-        aria-checked={selecting ? isSelected : undefined}
-        onclick={(event) => click(bookmark, event)}
+      <span class="visual">
+        <Thumb {bookmark} kind={view === "cards" ? "image" : "icon"} />
+      </span>
+      <span class="text">
+        <span class="title">
+          {#if parts}
+            {#each parts as part, index (index)}
+              {#if part.match}<mark>{part.text}</mark>{:else}{part.text}{/if}
+            {/each}
+          {:else}
+            {bookmark.title}
+          {/if}
+        </span>
+        <span class="host">
+          {#if bookmark.favorite}
+            <span class="fav" title="Favorit"><Icon name="star" filled /></span>
+          {/if}
+          {#if view === "cards" && bookmark.image && bookmark.icon}
+            <img class="favicon" src={bookmark.icon} alt="" loading="lazy" decoding="async" />
+          {/if}
+          <span class="domain">{host(bookmark.url)}</span>
+          {#if folderName && view === "list"}
+            <span class="folder">· {folderName(bookmark.folder_id)}</span>
+          {/if}
+          {#if bookmark.meta_status === "pending"}
+            <span class="pending">· lädt …</span>
+          {/if}
+        </span>
+      </span>
+    </a>
+    <!-- Auswahlkreis: im Auswahlmodus immer, sonst mit Maus beim Überfahren (startet die Auswahl). -->
+    {#if selecting}
+      <button
+        type="button"
+        class="check"
+        class:on={isSelected}
+        tabindex="-1"
+        aria-hidden="true"
+        onclick={(event) => onselect(bookmark, event)}
       >
-        <span class="visual">
-          <Thumb {bookmark} kind={view === "cards" ? "image" : "icon"} />
-        </span>
-        <span class="text">
-          <span class="title">
-            {#if parts}
-              {#each parts as part, index (index)}
-                {#if part.match}<mark>{part.text}</mark>{:else}{part.text}{/if}
-              {/each}
+        <Icon name="check" />
+      </button>
+    {:else}
+      <button
+        type="button"
+        class="check pick"
+        aria-label="„{bookmark.title}“ auswählen"
+        onclick={() => onstart(bookmark)}
+      >
+        <Icon name="check" />
+      </button>
+    {/if}
+    {#if !selecting}
+      <button
+        type="button"
+        class="edit icon"
+        aria-label="Aktionen für „{bookmark.title}“"
+        aria-haspopup="menu"
+        onclick={(event) => onmenu(bookmark, event, event.currentTarget)}
+      >
+        <Icon name="more" />
+      </button>
+    {/if}
+  </li>
+{/snippet}
+
+{#if groups}
+  {#each groups as group (group.folder?.id ?? "none")}
+    {#if group.start < limit}
+      {@const target = group.folder ? String(group.folder.id) : "none"}
+      <section class="group">
+        <h2 class="group-title">
+          <a
+            href={group.folder ? `/f/${group.folder.id}` : "/unsortiert"}
+            data-drop={target}
+            class:drop-over={drag.target === target}
+            onclick={(event) => {
+              if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey) return;
+              event.preventDefault();
+              onopen?.(group.folder);
+            }}
+          >
+            {#if group.folder}
+              <FolderIcon name={group.folder.icon} color={group.folder.color} />
+              <span class="path">
+                {#each group.path as folder, index (folder.id)}
+                  {#if index > 0}<span class="separator" aria-hidden="true">›</span>{/if}
+                  <span class:current={index === group.path.length - 1}>{folder.name}</span>
+                {/each}
+              </span>
             {:else}
-              {bookmark.title}
+              <Icon name="inbox" />
+              <span class="path"><span class="current">Unsortiert</span></span>
             {/if}
-          </span>
-          <span class="host">
-            {#if bookmark.favorite}
-              <span class="fav" title="Favorit"><Icon name="star" filled /></span>
-            {/if}
-            {#if view === "cards" && bookmark.image && bookmark.icon}
-              <img class="favicon" src={bookmark.icon} alt="" loading="lazy" decoding="async" />
-            {/if}
-            <span class="domain">{host(bookmark.url)}</span>
-            {#if folderName && view === "list"}
-              <span class="folder">· {folderName(bookmark.folder_id)}</span>
-            {/if}
-            {#if bookmark.meta_status === "pending"}
-              <span class="pending">· lädt …</span>
-            {/if}
-          </span>
-        </span>
-      </a>
-      <!-- Auswahlkreis: im Auswahlmodus immer, sonst mit Maus beim Überfahren (startet die Auswahl). -->
-      {#if selecting}
-        <button
-          type="button"
-          class="check"
-          class:on={isSelected}
-          tabindex="-1"
-          aria-hidden="true"
-          onclick={(event) => onselect(bookmark, event)}
-        >
-          <Icon name="check" />
-        </button>
-      {:else}
-        <button
-          type="button"
-          class="check pick"
-          aria-label="„{bookmark.title}“ auswählen"
-          onclick={() => onstart(bookmark)}
-        >
-          <Icon name="check" />
-        </button>
-      {/if}
-      {#if !selecting}
-        <button
-          type="button"
-          class="edit icon"
-          aria-label="Aktionen für „{bookmark.title}“"
-          aria-haspopup="menu"
-          onclick={(event) => onmenu(bookmark, event, event.currentTarget)}
-        >
-          <Icon name="more" />
-        </button>
-      {/if}
-    </li>
+            <span class="group-count">{group.count}</span>
+          </a>
+        </h2>
+        <ul class={view} class:selecting>
+          {#each bookmarks.slice(group.start, Math.min(group.start + group.count, limit)) as bookmark (bookmark.id)}
+            {@render item(bookmark)}
+          {/each}
+        </ul>
+      </section>
+    {/if}
   {/each}
-</ul>
+{:else}
+  <ul class={view} class:selecting>
+    {#each shown as bookmark (bookmark.id)}
+      {@render item(bookmark)}
+    {/each}
+  </ul>
+{/if}
 {#if shown.length < bookmarks.length}
   <div class="more" bind:this={sentinel}>{bookmarks.length - shown.length} weitere …</div>
 {/if}
 
 <style>
+  .group + .group {
+    margin-top: 1.5rem;
+  }
+
+  /* Überschrift bleibt beim Scrollen unter der Werkzeugleiste stehen. */
+  .group-title {
+    position: sticky;
+    top: var(--toolbar-height, 0px);
+    z-index: 2;
+    margin: 0 0 0.6rem;
+    font-size: 1rem;
+    font-weight: 600;
+    background: var(--bg);
+  }
+
+  .group-title a {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+    padding: 0.45rem 0.25rem;
+    color: inherit;
+    text-decoration: none;
+    border-radius: calc(var(--radius) - 4px);
+  }
+
+  .group-title a:hover {
+    background: var(--hover);
+  }
+
+  .group-title a.drop-over {
+    background: var(--drop);
+  }
+
+  .path {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    color: var(--muted);
+    font-weight: 500;
+  }
+
+  .path .current {
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  .separator {
+    margin: 0 0.35rem;
+  }
+
+  .group-count {
+    color: var(--muted);
+    font-size: 0.8rem;
+    font-weight: 400;
+  }
+
   .more {
     padding: 1.5rem;
     text-align: center;

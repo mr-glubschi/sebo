@@ -26,6 +26,7 @@
   import {
     buildTree,
     folderPath,
+    groupByFolder,
     loadPref,
     parseRoute,
     routePath,
@@ -69,6 +70,10 @@
   let route = $state<Route>(parseRoute(location.pathname));
   let view = $state<ViewMode>(loadPref("view", VIEW_MODES, "cards"));
   let sort = $state<SortMode>(loadPref("sort", SORT_MODES, "new"));
+  /** Nach Ordnern gruppieren (Abschnitte in Baumreihenfolge, Unsortiert zuletzt). */
+  /** Für die mitlaufenden Abschnittsüberschriften unter der Werkzeugleiste. */
+  let toolbarHeight = $state(0);
+  let grouped = $state(loadPref("grouped", ["on", "off"], "off") === "on");
   let menuOpen = $state(false);
   let dialog = $state<Dialog | null>(
     shared?.url ? { kind: "add", url: shared.url, title: shared.title } : null,
@@ -120,7 +125,13 @@
   const subfolders = $derived(
     current && !searching ? (tree.children.get(current.id) ?? []) : [],
   );
-  const visible = $derived(
+  // In „Unsortiert“ gibt es nur einen Abschnitt, dort nicht gruppieren.
+  const isGrouped = $derived(grouped && (searching || route.kind !== "unsorted"));
+  // Gruppiert zeigt ein Ordner auch den Inhalt seiner Unterordner.
+  const scope = $derived(
+    isGrouped && route.kind === "folder" && !searching ? subtree(tree, route.id) : null,
+  );
+  const flat = $derived(
     searching
       ? hits.map((hit) => hit.bookmark)
       : sortBookmarks(
@@ -130,12 +141,21 @@
               : route.kind === "favorites"
                 ? b.favorite
                 : route.kind === "unsorted"
-                ? b.folder_id === null
-                : b.folder_id === route.id,
+                  ? b.folder_id === null
+                  : scope
+                    ? b.folder_id !== null && scope.has(b.folder_id)
+                    : b.folder_id === route.id,
           ),
           sort,
         ),
   );
+  const groupedView = $derived(
+    isGrouped
+      ? groupByFolder(flat, tree, route.kind === "folder" && !searching ? route.id : null)
+      : null,
+  );
+  /** Angezeigte Reihenfolge (auch für Bereichsauswahl und „Alle“). */
+  const visible = $derived(groupedView?.ordered ?? flat);
   const highlights = $derived(
     searching ? new Map<number, Part[]>(hits.map((hit) => [hit.bookmark.id, hit.title])) : undefined,
   );
@@ -228,6 +248,11 @@
   function setView(mode: ViewMode) {
     view = mode;
     savePref("view", mode);
+  }
+
+  function toggleGrouped() {
+    grouped = !grouped;
+    savePref("grouped", grouped ? "on" : "off");
   }
 
   function setSort(mode: SortMode) {
@@ -702,8 +727,12 @@
     onclick={() => (menuOpen = false)}
   ></button>
 
-  <div class="content" inert={menuOpen && !menuOpenedByDrag}>
-    <header class="toolbar">
+  <div
+    class="content"
+    inert={menuOpen && !menuOpenedByDrag}
+    style:--toolbar-height="{toolbarHeight}px"
+  >
+    <header class="toolbar" bind:offsetHeight={toolbarHeight}>
       <button
         type="button"
         class="icon menu"
@@ -785,6 +814,18 @@
             </button>
           {/each}
         </div>
+        <button
+          type="button"
+          class="icon group-toggle"
+          class:active={isGrouped}
+          aria-pressed={isGrouped}
+          aria-label="Nach Ordnern gruppieren"
+          title="Nach Ordnern gruppieren"
+          disabled={route.kind === "unsorted" && !searching}
+          onclick={toggleGrouped}
+        >
+          <Icon name="group" />
+        </button>
         <select
           aria-label="Sortierung"
           value={sort}
@@ -863,13 +904,15 @@
           bookmarks={visible}
           {view}
           {highlights}
-          folderName={showFolders ? folderName : undefined}
-          resetKey={`${routePath(route)}|${query}|${sort}`}
+          folderName={showFolders && !groupedView ? folderName : undefined}
+          groups={groupedView?.groups}
+          resetKey={`${routePath(route)}|${query}|${sort}|${isGrouped}`}
           selecting={selectingBookmarks}
           selected={selection.ids}
           onselect={selectBookmark}
           onstart={(bookmark) => selection.start("bookmark", bookmark.id)}
           onmenu={bookmarkMenu}
+          onopen={(folder) => navigate(folder ? { kind: "folder", id: folder.id } : { kind: "unsorted" })}
         />
       {/if}
     </main>
@@ -1220,6 +1263,17 @@
     background: var(--selected);
   }
 
+  .group-toggle {
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: calc(var(--radius) - 4px);
+  }
+
+  .group-toggle.active {
+    color: var(--text);
+    background: var(--selected);
+  }
+
   main {
     padding: 1.25rem 1.5rem 3rem;
   }
@@ -1356,6 +1410,11 @@
       padding: 0.5rem 1rem;
     }
 
+    /* Werkzeugleiste scrollt hier mit: Abschnittsüberschriften ganz oben anheften. */
+    .content {
+      --toolbar-height: 0px !important;
+    }
+
     .search {
       order: 10;
       width: 100%;
@@ -1376,6 +1435,10 @@
     .options {
       width: 100%;
       justify-content: space-between;
+    }
+
+    .group-toggle {
+      margin-right: auto;
     }
 
     main {
