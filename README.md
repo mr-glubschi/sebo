@@ -11,9 +11,12 @@ Eine schlanke, selbst gehostete Bookmark-Verwaltung für Unraid. Bookmarks ersch
 - **Manuell hinzufügen**: über „Hinzufügen“ Adresse, Name und Ordner eingeben. Der Titel der Seite wird vorgeschlagen, ein Hinweis erscheint, wenn die Adresse schon gespeichert ist.
 - **Vorschaubilder**: das Vorschaubild der Webseite (`og:image`), sonst das Favicon, sonst ein farbiger Anfangsbuchstabe
 - **Drei Ansichten**: Karten, Liste und Kompakt, sortiert nach Name oder Datum. Ansicht und Sortierung merkt sich der Browser.
-- **Ordner und Unterordner**: beliebig tief. Bookmarks und Ordner mit der Maus auf einen Ordner ziehen, am Handy lange drücken und ziehen, oder im Bearbeiten-Dialog den Ordner wählen.
+- **Favoriten**: Bookmarks als Favorit markieren. Die Favoriten sind die Startseite; „Alle Bookmarks“ liegt unter `/alle`.
+- **Ordner und Unterordner**: beliebig tief, jeweils mit eigenem Symbol. Bookmarks und Ordner mit der Maus auf einen Ordner ziehen, am Handy lange drücken und ziehen, oder über „Verschieben nach …“. Ein Unterordner kommt auf die oberste Ebene, indem man ihn auf „Hierher: oberste Ebene“ über dem Ordnerbaum zieht.
+- **Kontextmenü**: Rechtsklick (oder der ⋯-Knopf, am Handy) auf ein Bookmark oder einen Ordner bietet die wichtigsten Aktionen: öffnen, bearbeiten, als Favorit markieren, verschieben, Link kopieren, löschen.
+- **Mehrfachauswahl**: Im Kontextmenü „Auswählen“ wählen, dann weitere Einträge antippen (Umschalt-Klick wählt einen Bereich). Ausgewählte Bookmarks lassen sich gemeinsam verschieben, als Favorit markieren oder löschen, ausgewählte Ordner gemeinsam verschieben, löschen oder zusammenführen.
 - **Live-Suche**: unscharfe Suche nach Name und Domain, Treffer erscheinen beim Tippen. Tippfehler und Umlaute sind kein Problem („arzte“ findet „Ärzte“). Taste `/` springt ins Suchfeld, Enter öffnet den ersten Treffer.
-- **Import und Export**: im HTML-Format, das alle Browser und Raindrop beherrschen. Ordner bleiben erhalten, doppelte Adressen werden übersprungen.
+- **Import und Export**: im HTML-Format, das alle Browser und Raindrop beherrschen. Ordner bleiben erhalten, doppelte Adressen werden übersprungen. Favoriten und Ordner-Symbole kennt das Format nicht, sie gehen beim Export verloren.
 - **Handy-tauglich**: als Web-App installierbar; unter Android Links direkt über „Teilen“ speichern
 - **Automatische Sicherung**: tägliche Kopie der Datenbank, die letzten 7 Tage werden aufbewahrt
 - **Hell und dunkel**: folgt der Einstellung des Geräts
@@ -73,6 +76,10 @@ docker exec sebo reset-2fa
 ```
 
 Der neue QR-Code erscheint direkt in der Konsole, in der du den Befehl ausführst (und bis zur Bestätigung auch beim nächsten Start im Log). Alle Sitzungen werden abgemeldet, ein Neustart ist nicht nötig.
+
+### Passwort ändern
+
+Neues Passwort in der Variable `PASSWORD` (oder `PASSWORD_HASH`) eintragen und den Container neu starten. SEBO erkennt die Änderung beim Start und meldet alle Geräte ab. Auch ein Wechsel zwischen `PASSWORD` und `PASSWORD_HASH` gilt als Änderung.
 
 ### Passwort nicht im Klartext speichern (optional)
 
@@ -137,7 +144,10 @@ Die Dateien in `backups/` sind immer in sich stimmig und lassen sich auch im lau
 - **Android (Chrome):** SEBO über HTTPS öffnen, im Menü „Zum Startbildschirm hinzufügen“ bzw. „App installieren“. Danach erscheint SEBO im „Teilen“-Menü anderer Apps: Link teilen, SEBO wählen, Ordner aussuchen, speichern.
 - **iPhone (Safari):** „Teilen“ → „Zum Home-Bildschirm“. iOS unterstützt kein Teilen an Web-Apps. Link kopieren und im „Hinzufügen“-Dialog mit dem Einfügen-Knopf übernehmen. Die installierte Web-App hat eigene Cookies, du meldest dich dort einmal neu an.
 - Zum Verschieben ein Bookmark lange drücken und auf einen Ordner im Menü ziehen.
+- Der ⋯-Knopf auf Karten und Ordnern öffnet das Menü mit allen Aktionen, darunter „Auswählen“ für die Mehrfachauswahl.
 
 ## Lizenz
 
 SEBO steht unter der [GNU Affero General Public License v3.0](LICENSE). Du darfst SEBO frei nutzen, verändern und weitergeben. Wer eine veränderte Version weitergibt oder als Webdienst für andere betreibt, muss den geänderten Quellcode unter derselben Lizenz zugänglich machen.
+
+Die Ordner-Symbole stammen aus [Lucide](https://lucide.dev) (ISC-Lizenz, siehe `web/public/licenses/lucide.txt`).
