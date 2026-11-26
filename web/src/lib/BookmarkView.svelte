@@ -19,6 +19,8 @@
     selecting: boolean;
     selected: ReadonlySet<number>;
     onselect: (bookmark: Bookmark, event: MouseEvent) => void;
+    /** Auswahl mit diesem Bookmark beginnen (Kreis beim Überfahren). */
+    onstart: (bookmark: Bookmark) => void;
     /** Kontextmenü: Rechtsklick oder ⋯-Knopf (dann mit `trigger`). */
     onmenu: (bookmark: Bookmark, event: MouseEvent, trigger?: HTMLElement) => void;
   }
@@ -32,6 +34,7 @@
     selecting,
     selected,
     onselect,
+    onstart,
     onmenu,
   }: Props = $props();
 
@@ -74,7 +77,7 @@
   });
 </script>
 
-<ul class={view}>
+<ul class={view} class:selecting>
   {#each shown as bookmark (bookmark.id)}
     {@const parts = highlights?.get(bookmark.id)}
     {@const isSelected = selecting && selected.has(bookmark.id)}
@@ -95,11 +98,6 @@
         aria-checked={selecting ? isSelected : undefined}
         onclick={(event) => click(bookmark, event)}
       >
-        {#if selecting}
-          <span class="check" class:on={isSelected} aria-hidden="true">
-            <Icon name="check" />
-          </span>
-        {/if}
         <span class="visual">
           <Thumb {bookmark} kind={view === "cards" ? "image" : "icon"} />
         </span>
@@ -130,6 +128,28 @@
           </span>
         </span>
       </a>
+      <!-- Auswahlkreis: im Auswahlmodus immer, sonst mit Maus beim Überfahren (startet die Auswahl). -->
+      {#if selecting}
+        <button
+          type="button"
+          class="check"
+          class:on={isSelected}
+          tabindex="-1"
+          aria-hidden="true"
+          onclick={(event) => onselect(bookmark, event)}
+        >
+          <Icon name="check" />
+        </button>
+      {:else}
+        <button
+          type="button"
+          class="check pick"
+          aria-label="„{bookmark.title}“ auswählen"
+          onclick={() => onstart(bookmark)}
+        >
+          <Icon name="check" />
+        </button>
+      {/if}
       {#if !selecting}
         <button
           type="button"
@@ -185,15 +205,66 @@
   }
 
   .check {
-    flex: none;
+    position: absolute;
+    z-index: 1;
     display: grid;
     place-items: center;
     width: 1.5rem;
     height: 1.5rem;
+    padding: 0;
     color: transparent;
     background: var(--surface);
     border: 2px solid var(--muted);
     border-radius: 50%;
+    cursor: pointer;
+  }
+
+  .check:hover {
+    border-color: var(--accent);
+  }
+
+  /* Ohne Auswahl nur mit Maus beim Überfahren, bei Touch gar nicht (dort: ⋯ → Auswählen). */
+  .pick {
+    display: none;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    li:hover .pick,
+    li:focus-within .pick {
+      display: grid;
+    }
+
+    .list li:hover:has(.pick) .visual,
+    .list li:focus-within:has(.pick) .visual,
+    .compact li:hover:has(.pick) .visual,
+    .compact li:focus-within:has(.pick) .visual {
+      visibility: hidden;
+    }
+  }
+
+  /* Liste und Kompakt: Kreis liegt auf dem Symbol, das solange verschwindet. */
+  .list .check {
+    top: 50%;
+    left: 1.25rem;
+    transform: translateY(-50%);
+  }
+
+  .compact .check {
+    top: 50%;
+    left: 0.75rem;
+    width: 1.25rem;
+    height: 1.25rem;
+    transform: translateY(-50%);
+  }
+
+  .compact .check :global(svg) {
+    width: 13px;
+    height: 13px;
+  }
+
+  .list.selecting .visual,
+  .compact.selecting .visual {
+    visibility: hidden;
   }
 
   .check :global(svg) {
@@ -209,10 +280,8 @@
   }
 
   .cards .check {
-    position: absolute;
     top: 0.5rem;
     left: 0.5rem;
-    z-index: 1;
     box-shadow: 0 1px 4px rgb(0 0 0 / 0.25);
   }
 

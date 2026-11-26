@@ -833,6 +833,7 @@
           selecting={selectingBookmarks}
           selected={selection.ids}
           onselect={selectBookmark}
+          onstart={(bookmark) => selection.start("bookmark", bookmark.id)}
           onmenu={bookmarkMenu}
         />
       {/if}
